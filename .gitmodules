@@ -1,9 +1,6 @@
-[submodule "firmware/cmsis-device-f4"]
-	path = firmware/cmsis-device-f4
-	url = https://github.com/STMicroelectronics/cmsis_device_f4.git
-[submodule "firmware/stm32f4xx-hal-driver"]
-	path = firmware/stm32f4xx-hal-driver
-	url = https://github.com/STMicroelectronics/stm32f4xx_hal_driver.git
-[submodule "firmware/FreeRTOS-Kernel"]
-	path = firmware/FreeRTOS-Kernel
-	url = https://github.com/FreeRTOS/FreeRTOS-Kernel.git
+[submodule "firmware/stm32"]
+    path = firmware/stm32
+    url = https://github.com/STMicroelectronics/STM32CubeF4.git
+[submodule "STM32CubeF4"]
+	path = STM32CubeF4
+	url = https://github.com/STMicroelectronics/STM32CubeF4.git
