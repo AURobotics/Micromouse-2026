@@ -48,6 +48,44 @@
 /* Private variables ---------------------------------------------------------*/
 
 /* USER CODE BEGIN PV */
+enum MotionType{
+  FORWARD,
+  STOP,
+  TURN
+};
+
+typedef struct {
+  enum MotionType type;
+} MotionCommand_t;
+
+typedef struct {
+  bool status; // 0 = done, 1 = running
+} MotionStatus_t;
+
+struct vec_3 {
+  float vec[3];
+  float& x() { return vec[0]; }
+  float& y() { return vec[1]; }
+  float& z() { return vec[2]; }
+  const float& x() const { return vec[0]; }
+  const float& y() const { return vec[1]; }
+  const float& z() const { return vec[2]; }
+};
+
+struct position{
+  double x,y;
+  double angle;
+};
+
+bool walls[3] = {false};//front right left
+vec_3 euler;
+vec_3 gyro;
+double ir_readings[6] = {0};
+struct position position;
+SemaphoreHandle_t dataMutex;
+QueueHandle_t motionCmdQueue;
+QueueHandle_t motionStatusQueue;
+
 
 /* USER CODE END PV */
 
@@ -55,7 +93,11 @@
 void SystemClock_Config(void);
 void MX_FREERTOS_Init(void);
 /* USER CODE BEGIN PFP */
-
+void imuTask(void *arg);
+void encoderTask(void *arg);
+void irTask(void *arg);
+void motionControlTask(void *arg);
+void algorithmTask(void *arg);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -103,6 +145,16 @@ int main(void)
   MX_USART2_Init();
   /* USER CODE BEGIN 2 */
 
+  dataMutex = xSemaphoreCreateMutex();
+  motionCmdQueue    = xQueueCreate(8, sizeof(MotionCommand_t));
+  motionStatusQueue = xQueueCreate(8, sizeof(MotionStatus_t));
+
+  xTaskCreate(algorithmTask,"ALGO", 512, NULL, 1, NULL);
+  xTaskCreate(motionControlTask,"MOTC", 512, NULL, 4, NULL);
+  xTaskCreate(imuTask,"IMU",256, NULL, 2, NULL);
+  xTaskCreate(encoderTask, "ENC",256, NULL, 3, NULL);
+  xTaskCreate(irTask, "IR",256, NULL,2, NULL);
+  
   /* USER CODE END 2 */
 
   /* Init scheduler */
@@ -179,7 +231,54 @@ void SystemClock_Config(void)
 }
 
 /* USER CODE BEGIN 4 */
+// ########### IMPORTANT: dont forget fy kol task betekteb fy global variable semaphoretake/give ba3d kol read/write##################
+void imuTask(void *arg) {
+    TickType_t last = xTaskGetTickCount();
+    for (;;) {
+        vTaskDelayUntil(&last, pdMS_TO_TICKS(10));
+        // read i2c
+        // write euler, gyro
+    }
+}
 
+void encoderTask(void *arg) {
+    TickType_t last = xTaskGetTickCount();
+    for (;;) {
+        vTaskDelayUntil(&last, pdMS_TO_TICKS(5));
+        // iir filter
+        // write position
+    }
+}
+
+void irTask(void *arg) {
+    TickType_t last = xTaskGetTickCount();
+    for (;;) {
+        vTaskDelayUntil(&last, pdMS_TO_TICKS(1));
+        // read sensors
+        // fix position beta3 encoders
+        // write walls[3]
+        // update readings[6]
+    }
+}
+
+void motionControlTask(void *arg) {
+    TickType_t last = xTaskGetTickCount();
+    for (;;) {
+        vTaskDelayUntil(&last, pdMS_TO_TICKS(5));
+        // pure pursuit 
+        // feedforward+pi
+        // execute motor commands
+    }
+}
+
+void algorithmTask(void *arg) {
+    MotionStatus_t status;
+    for (;;) {
+        if (xQueueReceive(motionStatusQueue, &status, portMAX_DELAY) == pdTRUE){
+          
+        }
+    }
+}
 /* USER CODE END 4 */
 
 /**
