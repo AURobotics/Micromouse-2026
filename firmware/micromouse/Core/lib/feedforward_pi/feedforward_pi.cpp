@@ -1,9 +1,7 @@
-#pragma once
 #include "feedforward_pi.h"
 
-VelocityController::VelocityController() = default;
 
-explicit VelocityController::VelocityController(const FFPIConfig& config)
+VelocityController::VelocityController(const FFPIConfig& config)
     : cfg_(config) {}
 
 void VelocityController::setConfig(const FFPIConfig& config) {
