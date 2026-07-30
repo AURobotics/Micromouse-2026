@@ -1,6 +1,5 @@
 #include "feedforward_pi.h"
 
-
 VelocityController::VelocityController(const FFPIConfig& config)
     : cfg_(config) {}
 
@@ -14,21 +13,24 @@ const FFPIConfig& VelocityController::getConfig() const {
 
 void VelocityController::reset() {
     integral_ = 0.0f;
+    prevTargetVelocity_ = 0.0f;
     lastDebug_ = FFPIDebug();
 }
 
 //main control loop returns pwm value
-float VelocityController::compute(float targetVelocity, float targetAcceleration,float actualVelocity, float dt) {
+float VelocityController::compute(float targetVelocity,float actualVelocity, float dt) {
     if (dt <= 0.0f) {
         return lastDebug_.output;
     }
-        
-    //feedforward
-    float sign = 0.0f;
-    if (targetVelocity > 0.0f) sign = 1.0f;
-    else if (targetVelocity < 0.0f) sign = -1.0f;
+    
+    if(firstCall_){
+        prevTargetVelocity_ = targetVelocity;
+        firstCall_ = false;
+    }
 
-    float ff = cfg_.kS*sign + cfg_.kV*targetVelocity + cfg_.kA*targetAcceleration;
+    //feedforward
+    float w_ref_dot = (targetVelocity - prevTargetVelocity_)/dt;
+    float ff = targetVelocity / cfg_.km_ff + w_ref_dot * (cfg_.tau_ff/cfg_.km_ff);
 
     //PI
     float error = targetVelocity - actualVelocity;
@@ -50,9 +52,8 @@ float VelocityController::compute(float targetVelocity, float targetAcceleration
     if (!saturated || wouldReduceSaturation) {
         integral_ = integral;
     }
-
+    
     lastDebug_.targetVelocity = targetVelocity;
-    lastDebug_.targetAcceleration = targetAcceleration;
     lastDebug_.actualVelocity = actualVelocity;
     lastDebug_.error = error;
     lastDebug_.ffTerm = ff;
@@ -60,7 +61,8 @@ float VelocityController::compute(float targetVelocity, float targetAcceleration
     lastDebug_.iTerm = iTerm;
     lastDebug_.output = output;
     lastDebug_.saturated = saturated;
-
+    
+    prevTargetVelocity_ = targetVelocity;
     return output;
 }
 
