@@ -30,6 +30,9 @@
 #include "queue.h"
 #include "semphr.h"
 
+#include "iirFilter.h"
+#include<math.h>
+
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 
@@ -42,7 +45,29 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
+ #define ENCODER_LEFT_TIM   /////nned to define timer
+ #define ENCODER_RIGHT_TIM   /////
 
+ typedef uint16_t encoder_count_t;    //adjust 3la 16 bit or 32 bit based on the encoder timer
+ // tim2 and timer 5 -->32 bit 
+ // tim3 and timer 4 -->16 bit
+ 
+ #define ENCODER_CPR  //// counts per revolution 
+
+ #define WHEEL_DIAMETER  //// in meters
+ #define WHEEL_BASE  //// in meters
+#define ENCODER_TASK_DT_S    //// in seconds
+
+
+ #define MOTOR_LEFT_TIM            // TODO
+#define MOTOR_LEFT_CHANNEL   // TODO
+#define MOTOR_RIGHT_TIM          // TODO
+#define MOTOR_RIGHT_CHANNEL     // TODO
+#define MOTOR_DIR_LEFT_GPIO_Port     // TODO
+#define MOTOR_DIR_LEFT_Pin         // TODO
+#define MOTOR_DIR_RIGHT_GPIO_Port  // TODO
+#define MOTOR_DIR_RIGHT_Pin        // TODO
+#define MOTOR_PWM_MAX_CCR   // TODO
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -66,6 +91,13 @@ typedef struct {
 typedef struct {
   bool status; // 0 = done, 1 = running
 } MotionStatus_t;
+
+struct velocity{
+  double v; // m/s
+  double omega; // rad/s
+  double vL; // m/s    left wheel
+  double vR; // m/s     right wheel
+};
 
 struct vec_3 {
   float vec[3];
@@ -254,12 +286,52 @@ void imuTask(void *arg) {
 
 void encoderTask(void *arg) {
     TickType_t last = xTaskGetTickCount();
-    for (;;) {
-        vTaskDelayUntil(&last, pdMS_TO_TICKS(5));
+  
         // iir filter
         // write position
-    }
-}
+      const float mm_per_tick = (float)M_PI * WHEEL_DIAMETER / ENCODER_CPR; // meter of travel per encoder tick
+      ButterworthIIR velL;
+      ButterworthIIR velR;  
+      velL.init(, ); // cutoff freq, sample rate
+      velR.init(, ); 
+      velL.reset();
+      velR.reset();
+
+      EncoderCount_t left_count = (EncoderCount_t)__HAL_TIM_GET_COUNTER(&ENCODER_LEFT_TIM);
+      EncoderCount_t right_count = (EncoderCount_t)__HAL_TIM_GET_COUNTER(&ENCODER_RIGHT_TIM);
+
+       for (;;) {
+        vTaskDelayUntil(&last, pdMS_TO_TICKS(5));
+         // raw counts
+        EncoderCount_t countL = (EncoderCount_t)__HAL_TIM_GET_COUNTER(&ENCODER_LEFT_TIM);
+        EncoderCount_t countR = (EncoderCount_t)__HAL_TIM_GET_COUNTER(&ENCODER_RIGHT_TIM);
+
+        int32_t deltaL = (int32_t)(EncoderCount_t)(countL - lastCountL);
+        int32_t deltaR = (int32_t)(EncoderCount_t)(countR - lastCountR);
+
+
+        
+         if (sizeof(EncoderCount_t) == sizeof(uint16_t)) {
+            deltaL = (int16_t)deltaL;
+            deltaR = (int16_t)deltaR;
+        }
+        lastCountL = countL;
+        lastCountR = countR;
+
+        // --- counts -> distance (m) -> raw velocity (m/s) ---
+        float rawVelL = (deltaL * mm_per_tick) / ENCODER_TASK_DT_S;
+        float rawVelR = (deltaR * mm_per_tick) / ENCODER_TASK_DT_S;
+         //////?????
+        float velL = velL.filter(rawVelL);
+        float velR = velR.filter(rawVelR);
+        float v = (velL + velR) * 0.5f;          // m/s, forward speed
+        float w = (velR - velL) / WHEEL_BASE;  // rad/s, positive = turning left
+        float dTheta = w * ENCODER_TASK_DT_S;
+
+
+      }
+     }
+
 
 void irTask(void *arg) {
     TickType_t last = xTaskGetTickCount();
