@@ -5,9 +5,8 @@
 
 struct FFPIConfig {
     //Feedforward
-    float kS = 0.0f;   // static friction term  (smallest pwm to get the wheels moving)
-    float kV = 0.0f;   // velocity gain (pwm per unit velocity)
-    float kA = 0.0f;   // acceleration gain (pwm per unit acceleration)
+    float km_ff = 0.05f;   // static friction term  (smallest pwm to get the wheels moving)
+    float tau_ff = 0.12f;
 
     //PI
     float kP = 0.0f;
@@ -22,7 +21,6 @@ struct FFPIConfig {
 
 struct FFPIDebug {
     float targetVelocity = 0.0f;
-    float targetAcceleration = 0.0f;
     float actualVelocity = 0.0f;
     float error = 0.0f;
     float ffTerm = 0.0f;
@@ -40,7 +38,7 @@ public:
     void setConfig(const FFPIConfig& config);
     const FFPIConfig& getConfig() const;
     void reset();
-    float compute(float targetVelocity, float targetAcceleration,float actualVelocity, float dt);
+    float compute(float targetVelocity, float actualVelocity, float dt);
     const FFPIDebug& getDebug() const;
     float getIntegral() const;
 
@@ -48,7 +46,9 @@ private:
     static float clamp(float value, float lo, float hi);
 
     FFPIConfig cfg_;
-    float integral_ = 0.0f;
     FFPIDebug lastDebug_;
+    float integral_ = 0.0f;
+    float prevTargetVelocity_ = 0.0f;
+    bool firstCall_ = true;
 };
 

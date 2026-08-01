@@ -28,8 +28,9 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS TRUE)
 project(${CMAKE_PROJECT_NAME})
 message("Build type: " ${CMAKE_BUILD_TYPE})
 
-# Enable CMake support for ASM and C languages
-enable_language(C ASM)
+# Enable CMake support for ASM, C, and CPP languages
+enable_language(C ASM CXX)
+set(CMAKE_CXX_STANDARD 17)
 
 # Create an executable object type
 add_executable(${CMAKE_PROJECT_NAME})
@@ -44,17 +45,17 @@ target_link_directories(${CMAKE_PROJECT_NAME} PRIVATE
 
 # Add sources to executable
 target_sources(${CMAKE_PROJECT_NAME} PRIVATE
-    # Add user sources here
+    Core/lib/feedforward_pi/feedforward_pi.cpp
 )
 
 # Add include paths
 target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
-    # Add user defined include paths
+        Core/lib/feedforward_pi
 )
 
 # Add project symbols (macros)
 target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE
-    # Add user defined symbols
+        USE_HAL_DRIVER
 )
 
 # Remove wrong libob.a library dependency when using cpp files
@@ -65,4 +66,8 @@ target_link_libraries(${CMAKE_PROJECT_NAME}
     stm32cubemx
 
     # Add user defined libraries
+)
+
+target_link_options(${PROJECT_NAME} PRIVATE
+        -u _printf_float
 )
