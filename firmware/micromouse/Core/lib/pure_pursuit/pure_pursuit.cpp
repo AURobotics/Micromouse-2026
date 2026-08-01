@@ -39,6 +39,15 @@ wheelVelocity PurePursuitPD::computeControl(const Pose& current_pose,
                                            double target_v,
                                            const std::vector<Point>& path,
                                            double dt) {
+                                    
+    int size = path.size();
+    if(current_pose.x == path[size-1].x && current_pose.y == path[size-1].y){
+        wheelVelocity wheels;
+        wheels.left  = 0;
+        wheels.right = 0;
+        return wheels;
+    }
+    
     Point lookahead_point = findLookaheadPoint(current_pose, path);
 // bzbt el lookahead point ll current pose
     double dx = lookahead_point.x - current_pose.x;

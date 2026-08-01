@@ -116,9 +116,11 @@ vec_3 euler;
 vec_3 gyro;
 double ir_readings[6] = {0};
 struct Pose position = {0,0,0};
+struct velocity robot_velocity = {0,0,0,0};
 SemaphoreHandle_t dataMutex;
 QueueHandle_t motionCmdQueue;
 QueueHandle_t motionStatusQueue;
+
 
 //TODO: tune these // km_ff tau_ff kp ki
 FFPIConfig left_config = {0.05f,  0.12f, 0, 0};
@@ -127,6 +129,7 @@ static VelocityController leftCtrl(left_config);
 static VelocityController rightCtrl(right_config);
 //lookahead, wheel_base, kp_omega, kd_omega
 static PurePursuitPD purePursuit(0, 0, 0, 0);
+struct wheelVelocity wheel_ref = {0,0};
 
 /* USER CODE END PV */
 
@@ -135,9 +138,9 @@ void SystemClock_Config(void);
 void MX_FREERTOS_Init(void);
 /* USER CODE BEGIN PFP */
 void imuTask(void *arg);
-void encoderTask(void *arg);
+void motionTask(void *arg);
 void irTask(void *arg);
-void motionControlTask(void *arg);
+void purePursuitTask(void *arg);
 void algorithmTask(void *arg);
 /* USER CODE END PFP */
 
@@ -191,9 +194,9 @@ int main(void)
   motionStatusQueue = xQueueCreate(8, sizeof(MotionStatus_t));
 
   xTaskCreate(algorithmTask,"ALGO", 512, NULL, 1, NULL);
-  xTaskCreate(motionControlTask,"MOTC", 512, NULL, 4, NULL);
+  xTaskCreate(motionTask,"MOTC", 512, NULL, 4, NULL);
   xTaskCreate(imuTask,"IMU",256, NULL, 2, NULL);
-  xTaskCreate(encoderTask, "ENC",256, NULL, 3, NULL);
+  xTaskCreate(purePursuitTask, "PUREPURSUIT",256, NULL, 3, NULL);
   xTaskCreate(irTask, "IR",256, NULL,2, NULL);
   
   /* USER CODE END 2 */
@@ -284,7 +287,7 @@ void imuTask(void *arg) {
     }
 }
 
-void encoderTask(void *arg) {
+void motionTask(void *arg) {
     TickType_t last = xTaskGetTickCount();
   
         // iir filter
@@ -292,6 +295,7 @@ void encoderTask(void *arg) {
       const float mm_per_tick = (float)M_PI * WHEEL_DIAMETER / ENCODER_CPR; // meter of travel per encoder tick
       ButterworthIIR velL;
       ButterworthIIR velR;  
+      double dt = 0.005; //TODO: is it better to calculate dt every loop?
       velL.init(, ); // cutoff freq, sample rate
       velR.init(, ); 
       velL.reset();
@@ -308,9 +312,6 @@ void encoderTask(void *arg) {
 
         int32_t deltaL = (int32_t)(EncoderCount_t)(countL - lastCountL);
         int32_t deltaR = (int32_t)(EncoderCount_t)(countR - lastCountR);
-
-
-        
          if (sizeof(EncoderCount_t) == sizeof(uint16_t)) {
             deltaL = (int16_t)deltaL;
             deltaR = (int16_t)deltaR;
@@ -328,7 +329,15 @@ void encoderTask(void *arg) {
         float w = (velR - velL) / WHEEL_BASE;  // rad/s, positive = turning left
         float dTheta = w * ENCODER_TASK_DT_S;
 
-
+        //TODO: et2akedy men dool
+        float distance_center = ((deltaL * mm_per_tick)+(deltaR * mm_per_tick))/2.0f;
+        position.x += distance_center*cos(position.theta/2.0f);
+        position.y += distance_center*sin(position.theta/2.0f);
+        // position.theta = dTheta/2.0f; //TODO: will we use angle men encoders?
+        
+        double left_cmd  = leftCtrl.compute(wheel_ref.left,  velL,  dt);
+        double right_cmd = rightCtrl.compute(wheel_ref.right, velR, dt);
+        //TODO:drive motors dont know pins and stuff yet
       }
      }
 
@@ -344,27 +353,19 @@ void irTask(void *arg) {
     }
 }
 
-void motionControlTask(void *arg) {
+void purePursuitTask(void *arg) {
     TickType_t last = xTaskGetTickCount();
     double dt = 0.005; //TODO: is it better to calculate dt every loop?
     std::vector<Point> path;
     double target_v;
+    purePursuit.reset();
     for (;;) {
         vTaskDelayUntil(&last, pdMS_TO_TICKS(5));
-        // TODO: decide how to actually do this do we use mutex wala is it safe
         Pose current_pose = position;
-        double v_measured = 0.0f; 
-        double omega_measured = 0.0f;
-        double left_wheel_meas = 0.0f;
-        double right_wheel_meas = 0.0f;
+        double v_measured = robot_velocity.v; 
+        double omega_measured = robot_velocity.omega;
 
-        struct wheelVelocity wheel_ref = purePursuit.computeControl(current_pose, v_measured, omega_measured,target_v, path, dt);
-
-        
-        double left_cmd  = leftCtrl.compute(wheel_ref.left,  left_wheel_meas,  dt);
-        double right_cmd = rightCtrl.compute(wheel_ref.right, right_wheel_meas, dt);
-
-        //drive motors dont know pins and all that yet
+        wheel_ref = purePursuit.computeControl(current_pose, v_measured, omega_measured,target_v, path, dt);
         
     }
 }
@@ -410,9 +411,7 @@ void Error_Handler(void)
   /* USER CODE BEGIN Error_Handler_Debug */
   /* User can add his own implementation to report the HAL error return state */
   __disable_irq();
-  while (1)
-  {
-  }
+  while (1){}
   /* USER CODE END Error_Handler_Debug */
 }
 #ifdef USE_FULL_ASSERT
