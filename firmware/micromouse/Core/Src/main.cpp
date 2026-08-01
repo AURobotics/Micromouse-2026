@@ -25,6 +25,10 @@
 #include "i2c.h"
 #include "tim.h"
 #include "usart.h"
+#include "feedforward_pi.h"
+#include "pure_pursuit.h"
+#include "queue.h"
+#include "semphr.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
@@ -73,20 +77,24 @@ struct vec_3 {
   const float& z() const { return vec[2]; }
 };
 
-struct position{
-  double x,y;
-  double angle;
-};
+
 
 bool walls[3] = {false};//front right left
 vec_3 euler;
 vec_3 gyro;
 double ir_readings[6] = {0};
-struct position position;
+struct Pose position = {0,0,0};
 SemaphoreHandle_t dataMutex;
 QueueHandle_t motionCmdQueue;
 QueueHandle_t motionStatusQueue;
 
+//TODO: tune these // km_ff tau_ff kp ki
+FFPIConfig left_config = {0.05f,  0.12f, 0, 0};
+FFPIConfig right_config = {0.05f,  0.12f, 0, 0};
+static VelocityController leftCtrl(left_config);
+static VelocityController rightCtrl(right_config);
+//lookahead, wheel_base, kp_omega, kd_omega
+static PurePursuitPD purePursuit(0, 0, 0, 0);
 
 /* USER CODE END PV */
 
@@ -266,11 +274,26 @@ void irTask(void *arg) {
 
 void motionControlTask(void *arg) {
     TickType_t last = xTaskGetTickCount();
+    double dt = 0.005; //TODO: is it better to calculate dt every loop?
+    std::vector<Point> path;
+    double target_v;
     for (;;) {
         vTaskDelayUntil(&last, pdMS_TO_TICKS(5));
-        // pure pursuit 
-        // feedforward+pi
-        // execute motor commands
+        // TODO: decide how to actually do this do we use mutex wala is it safe
+        Pose current_pose = position;
+        double v_measured = 0.0f; 
+        double omega_measured = 0.0f;
+        double left_wheel_meas = 0.0f;
+        double right_wheel_meas = 0.0f;
+
+        struct wheelVelocity wheel_ref = purePursuit.computeControl(current_pose, v_measured, omega_measured,target_v, path, dt);
+
+        
+        double left_cmd  = leftCtrl.compute(wheel_ref.left,  left_wheel_meas,  dt);
+        double right_cmd = rightCtrl.compute(wheel_ref.right, right_wheel_meas, dt);
+
+        //drive motors dont know pins and all that yet
+        
     }
 }
 
