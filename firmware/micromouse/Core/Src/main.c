@@ -17,6 +17,7 @@
   */
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
+
 #include "main.h"
 #include "FreeRTOS.h"
 #include "adc.h"
@@ -25,6 +26,7 @@
 #include "i2c.h"
 #include "tim.h"
 #include "usart.h"
+#include "app_main.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
@@ -112,6 +114,7 @@ int main(void)
 
   /* Start scheduler */
   osKernelStart();
+  app_main();
 
   /* We should never get here as control is now taken by the scheduler */
 
