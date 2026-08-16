@@ -47,12 +47,16 @@ target_link_directories(${CMAKE_PROJECT_NAME} PRIVATE
 target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     Core/lib/feedforward_pi/feedforward_pi.cpp
     Core/lib/pure_pursuit/pure_pursuit.cpp
+    Core/lib/IIRFilter/iirFilter.cpp
+    Core/lib/PDcontroller/PDcontroller.h
 )
 
 # Add include paths
 target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
         Core/lib/feedforward_pi
         Core/lib/pure_pursuit
+        Core/lib/IIRFilter
+        Core/lib/PDcontroller
 )
 
 # Add project symbols (macros)

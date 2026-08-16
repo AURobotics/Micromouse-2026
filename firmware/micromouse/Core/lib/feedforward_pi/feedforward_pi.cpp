@@ -14,6 +14,7 @@ const FFPIConfig& VelocityController::getConfig() const {
 void VelocityController::reset() {
     integral_ = 0.0f;
     prevTargetVelocity_ = 0.0f;
+    firstCall_ = true;
     lastDebug_ = FFPIDebug();
 }
 
