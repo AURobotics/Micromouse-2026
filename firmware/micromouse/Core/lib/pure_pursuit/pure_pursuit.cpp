@@ -7,7 +7,8 @@ PurePursuitPD::PurePursuitPD(double lookahead, double wheel_base, double kp, dou
       kp_o_(kp), 
       kd_o_(kd), 
       prev_error_o_(0.0),
-      last_target_idx_(0) {}
+      last_target_idx_(0) ,
+      is_first_run_(true) {}
 
 Point PurePursuitPD::findLookaheadPoint(const Pose& current_pose, const std::vector<Point>& path) {
     if (path.empty()) {
@@ -39,21 +40,29 @@ wheelVelocity PurePursuitPD::computeControl(const Pose& current_pose,
                                            double target_v,
                                            const std::vector<Point>& path,
                                            double dt) {
-                                    
-    int size = path.size();
-    if(current_pose.x == path[size-1].x && current_pose.y == path[size-1].y){
-        wheelVelocity wheels;
-        wheels.left  = 0;
-        wheels.right = 0;
-        return wheels;
+        
+    wheelVelocity wheels={target_v, target_v}; // yfdl mashy in linear velocity l7d m el algo y2ol el motion type elly 3ayzo
+
+    if (path.empty()) {  // kda lw el path empty yfdl mashy in linear velocity l7d m el algo y2ol el motion type elly 3ayzo?? is that correct??
+        return wheels; 
     }
-    
+
+    const Point& goal= path.back();
+    double goal_dist = std::hypot(goal.x - current_pose.x, goal.y - current_pose.y);
+    if (goal_dist < 0.01) {
+       // ana 3ayza el 🛺 y3rf en kda el turn 5lst f yrg3 ymsh f line aw zy ma el algo hy2ol elmotion type
+         return wheels; 
+    }
+
     Point lookahead_point = findLookaheadPoint(current_pose, path);
 // bzbt el lookahead point ll current pose
     double dx = lookahead_point.x - current_pose.x;
     double dy = lookahead_point.y - current_pose.y;
     double y_body = -dx * std::sin(current_pose.theta) + dy * std::cos(current_pose.theta);
-
+    
+    if (lookahead_dist_ <= 0.001) {   // guard mn el lookahead distance being too small
+        return wheels;
+    }
 // generate curvature based on the lookahead point 
     double curvature = (2.0 * y_body) / (lookahead_dist_ * lookahead_dist_);
 
@@ -62,7 +71,17 @@ wheelVelocity PurePursuitPD::computeControl(const Pose& current_pose,
 
 // cntrl loop for omega using PD control
     double error_omega = omega_ref - omega_measured;
-    double d_error_omega = (dt > 0.0) ? (error_omega - prev_error_o_) / dt : 0.0;
+    double d_error_omega = 0.0;
+   
+   
+    if (is_first_run_) {  //skip derivative fel first run to avoid large spikes
+        is_first_run_ = false;
+    } else if (dt > 0.0) {
+        d_error_omega = (error_omega - prev_error_o_) / dt;
+    }
+    
+    
+    
     prev_error_o_ = error_omega;
 
     double omega_cmd = omega_ref + (kp_o_ * error_omega) + (kd_o_ * d_error_omega);
@@ -73,7 +92,7 @@ wheelVelocity PurePursuitPD::computeControl(const Pose& current_pose,
 
     // convert el omega command to wheel velocities
     // bzbt el wheel velocities based on the commanded omega and target velocity
-    wheelVelocity wheels;
+    
     wheels.left  = target_v - (omega_cmd * wheel_base_ / 2.0);
     wheels.right = target_v + (omega_cmd * wheel_base_ / 2.0);
 
@@ -83,6 +102,7 @@ wheelVelocity PurePursuitPD::computeControl(const Pose& current_pose,
 void PurePursuitPD::reset() {
     prev_error_o_ = 0.0;
     last_target_idx_ = 0;
+    is_first_run_ = true;
 }
 
 void PurePursuitPD::setGains(double kp, double kd) {

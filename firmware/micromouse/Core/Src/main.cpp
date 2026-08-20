@@ -145,6 +145,7 @@ static VelocityController rightCtrl(right_config);
 // lookahead, wheel_base, kp_omega, kd_omega
 static PurePursuitPD purePursuit(0, 0, 0, 0);
 struct wheelVelocity wheel_ref = {0, 0};//purepursuit writes this
+std::vector<Point> current_path; // pure pursuit reads this & algorithm writes this
 
 /* USER CODE END PV */
 
@@ -314,8 +315,8 @@ void motionTask(void *arg)
   ButterworthIIR velL;
   ButterworthIIR velR;
   double dt = 0.005; // TODO: is it better to calculate dt every loop?
-  velL.init(1,1 );     // cutoff freq, sample rate
-  velR.init(1, 1);
+  velL.init(1,200.0f );     // cutoff freq, sample rate 5ms
+  velR.init(1,200.0f );
   velL.reset();
   velR.reset();
 
@@ -329,6 +330,7 @@ void motionTask(void *arg)
   {
     vTaskDelayUntil(&last, pdMS_TO_TICKS(5));
     // raw counts
+    
     EncoderCount_t countL = (EncoderCount_t)__HAL_TIM_GET_COUNTER(&ENCODER_LEFT_TIM);
     EncoderCount_t countR = (EncoderCount_t)__HAL_TIM_GET_COUNTER(&ENCODER_RIGHT_TIM);
 
@@ -360,7 +362,10 @@ void motionTask(void *arg)
       error generated from purepursuit is corrected by the IRs later
       the error should be negligible for one turn
     */
-
+    taskENTER_CRITICAL();
+    MotionType current_motion = motionType;
+    taskEXIT_CRITICAL();
+    
     if(motionType != lastMotionTypeMotion){
       //do i reset these? ana mayla le both reset or not reset so idk
       leftCtrl.reset();
@@ -387,6 +392,11 @@ void motionTask(void *arg)
     robot_velocity.v = v;
     robot_velocity.vL = velLfiltered;
     robot_velocity.vR = velRfiltered;
+    taskEXIT_CRITICAL();
+     // target v and motion type are written by alogo task and read inside controller&motion tasks f kda b acess el motiontype w target v atomatically
+    taskENTER_CRITICAL();
+    MotionType current_motion = motionType;
+    double current_target_v = target_v;
     taskEXIT_CRITICAL();
     
     // TODO:drive motors dont know pins and stuff yet
@@ -423,6 +433,8 @@ void controllerTask(void *arg)
   for (;;)
   {
     vTaskDelayUntil(&last, pdMS_TO_TICKS(5));
+    
+    
 
     taskENTER_CRITICAL();
     Pose current_pose = position;
@@ -434,6 +446,7 @@ void controllerTask(void *arg)
     if(motionType != lastMotionTypeCtrl){
       headingHoldPD.reset();
       lateralPD.reset();
+      purePursuit.reset();    
       lastMotionTypeCtrl = motionType;
     }
     if (motionType == STRAIGHT)
@@ -470,13 +483,28 @@ void controllerTask(void *arg)
       wheel_ref.right = base_v + lateral_correction;
       taskEXIT_CRITICAL();
     }
-    else // if (motiontype == TURN) //not TURN only ay haga tanya ba2a will fall back to pure pursuit and we'll have to trust it or smth else idk
+    else if (motionType == TURN)
+    {
+       wheelVelocity wheel_speed = purePursuit.computeControl(current_pose, v_measured, omega_measured, target_v, path, dt);
+          taskENTER_CRITICAL();
+           wheel_ref = wheel_speed;
+          taskEXIT_CRITICAL();
+
+         if (!path.empty()) {
+        const Point& goal = path.back();
+        double dist_to_goal = std::hypot(goal.x - current_pose.x, goal.y - current_pose.y);
+        
+        
+      if (dist_to_goal < 0.01) { // threshold to consider the turn complete
+        MotionStatus_t status = {false}; // done
+        xQueueSend(motionStatusQueue, &status, );
+      }
+    }}
+    else // if (motiontype == ) //not TURN only ay haga tanya ba2a will fall back to pure pursuit and we'll have to trust it or smth else idk
     {    // TODO: need to make a case for STOP 
-      wheelVelocity wheel_speed = purePursuit.computeControl(current_pose, v_measured, omega_measured, target_v, path, dt);
-      taskENTER_CRITICAL();
-      wheel_ref = wheel_speed;
-      taskEXIT_CRITICAL();
-    }
+     
+      
+  
   }
 }
 

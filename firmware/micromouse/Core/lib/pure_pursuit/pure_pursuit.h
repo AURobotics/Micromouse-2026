@@ -43,4 +43,5 @@ private:
     double kd_o_;           
     double prev_error_o_;   // omega error from previous timestep
     size_t last_target_idx_;// index of the last target point on the path
+    bool is_first_run_;       // flag to check if it's the first run 
 };
