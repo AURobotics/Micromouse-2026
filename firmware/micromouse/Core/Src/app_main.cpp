@@ -198,9 +198,7 @@ void motionTask_run(void *arg)
       error generated from purepursuit is corrected by the IRs later
       the error should be negligible for one turn
     */
-    taskENTER_CRITICAL();
-    MotionType current_motion = motionType;
-    taskEXIT_CRITICAL();
+  
     
     if(motionType != lastMotionTypeMotion){
       //do i reset these? ana mayla le both reset or not reset so idk
@@ -265,6 +263,13 @@ void controlTask_run(void *arg)
     double v_measured = robot_velocity.v;
     double omega_measured = robot_velocity.omega;
     double left_distance = ir_distance[2], right_distance = ir_distance[3];
+    double front_distance = (ir_distance[0] + ir_distance[1]) * 0.5;
+    MotionType current_motion = motionType;
+    double current_target_v = target_v;
+    std::vector<Point> path_copy = current_path;
+    bool wall_front = walls[0];
+    bool wall_left = walls[1];
+    bool wall_right = walls[2];
     taskEXIT_CRITICAL();
 
     if(motionType != lastMotionTypeCtrl){
@@ -272,6 +277,19 @@ void controlTask_run(void *arg)
       lateralPD.reset();
       purePursuit.reset();    
       lastMotionTypeCtrl = motionType;
+    }
+   // emergency stop if front wall detected & 🛺 lsa mkml staright
+    if (current_motion == STRAIGHT && (wall_front || front_distance < 0.02f ))  // TODO: tune threshold 
+    
+    {
+      taskENTER_CRITICAL();
+      wheel_ref.left = 0.0;
+      wheel_ref.right = 0.0;
+      taskEXIT_CRITICAL();
+
+      MotionStatus_t status = {false}; // done
+      xQueueSend(motionStatusQueue, &status, 0);
+      continue; // skip the rest of the loop
     }
     if (motionType == STRAIGHT)
     {
@@ -321,16 +339,19 @@ void controlTask_run(void *arg)
         
       if (dist_to_goal < 0.01) { // threshold to consider the turn complete
         MotionStatus_t status = {false}; // done
-        xQueueSend(motionStatusQueue, &status, );
+        xQueueSend(motionStatusQueue, &status,0 );
       }
     }}
-    else // if (motiontype == ) //not TURN only ay haga tanya ba2a will fall back to pure pursuit and we'll have to trust it or smth else idk
+    else  if (motionType == STOP){ 
     {    // TODO: need to make a case for STOP 
-     
+      taskENTER_CRITICAL();
+      wheel_ref.left = 0;
+      wheel_ref.right = 0;
+      taskEXIT_CRITICAL();
       
   
   }
-}
+}}}
 
 void algorithmTask_run(void *arg)
 {
