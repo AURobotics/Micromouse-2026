@@ -25,6 +25,7 @@
 #include "tim.h"
 #include "usart.h"
 #include "gpio.h"
+#include "app_main.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
@@ -105,6 +106,7 @@ int main(void)
   MX_TIM1_Init();
   MX_ADC1_Init();
   MX_ADC2_Init();
+  HAL_ADCEx_MultiModeStart_DMA(&hadc1, ir_adc_buf, IR_BUF_LEN);
   /* USER CODE BEGIN 2 */
 
   /* USER CODE END 2 */

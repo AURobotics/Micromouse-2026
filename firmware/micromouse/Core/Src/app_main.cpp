@@ -23,102 +23,7 @@
 * w el tasks and stuff cpp 
 */
 
-#define ENCODER_LEFT_TIM  htim2/////TODO:nned to define timer
-#define ENCODER_RIGHT_TIM htim3/////7ateet ay etneen 3ashan ye compile STILL NEED TO DEFINE TIMER
-
-typedef uint16_t EncoderCount_t; // adjust 3la 16 bit or 32 bit based on the encoder timer
-// tim2 and timer 5 -->32 bit
-// tim3 and timer 4 -->16 bit
-
-#define ENCODER_CPR 10 //// counts per revolution
-
-#define WHEEL_DIAMETER 1             //// in meters
-#define WHEEL_BASE 1                 //// in meters
-#define ENCODER_TASK_DT_S 1          //// in seconds
-#define EXPECTED_SIDE_DIST_TO_WALL 9 // TODO:(half cell width - half width of robot)
-
-#define MOTOR_LEFT_TIM 1            // TODO
-#define MOTOR_LEFT_CHANNEL 1        // TODO
-#define MOTOR_RIGHT_TIM 1           // TODO
-#define MOTOR_RIGHT_CHANNEL 1       // TODO
-#define MOTOR_DIR_LEFT_GPIO_Port 1  // TODO
-#define MOTOR_DIR_LEFT_Pin 1        // TODO
-#define MOTOR_DIR_RIGHT_GPIO_Port 1 // TODO
-#define MOTOR_DIR_RIGHT_Pin 1       // TODO
-#define MOTOR_PWM_MAX_CCR 1         // TODO
-
-// use this to know the type of motion 3ashan ne center the robot only in STRAIGHT segments algorithm task controls it
-enum MotionType
-{
-  STRAIGHT,
-  STOP,
-  TURN,
-};
-
-typedef struct {
-  enum MotionType type;
-} MotionCommand_t;
-
-/*
-  not sure abt this?? algorithm needs to know if the robot finished turning to read new walls and decide the new tile to move to
-  fa 3ashan keda nestakhdem motion status
-*/
-typedef struct
-{
-  bool status; // 0 = done, 1 = running
-} MotionStatus_t;
-
-struct velocity
-{
-  double v;     // m/s
-  double omega; // rad/s
-  double vL;    // m/s    left wheel
-  double vR;    // m/s     right wheel
-};
-
-struct vec_3
-{
-  float vec[3];
-  float &x() { return vec[0]; }
-  float &y() { return vec[1]; }
-  float &z() { return vec[2]; }
-  const float &x() const { return vec[0]; }
-  const float &y() const { return vec[1]; }
-  const float &z() const { return vec[2]; }
-};
-
-/* wrap reading/writing structs aw variables related le ba3d b taskENTER_CRITICAL() and taskEXIT_CRITICAL()
-  bas keep them short and fast with no blocking functions inside
-  3ashan mayektebsh half the data and then ye7sal interrupt fa yeb2a nos el data new w nos old*/
-
-bool walls[3] = {false}; // front left right
-vec_3 euler;//TODO:IMPORTANT CHECK THE UNITS OF EULER 
-vec_3 gyro;
-double ir_readings[6] = {0}; // left_front, right_front, left,right,left_diag, right_diag
-double ir_distance[6] = {0};
-struct Pose position = {0, 0, 0};
-struct velocity robot_velocity = {0, 0, 0, 0};
-
-QueueHandle_t motionCmdQueue;
-QueueHandle_t motionStatusQueue; // queue 3ashan ye trigger algorithm when status changes
-MotionType motionType = STOP;
-double target_v;
-// TODO: tune these // km_ff tau_ff kp ki
-FFPIConfig left_config = {0.05f, 0.12f, 0, 0};
-FFPIConfig right_config = {0.05f, 0.12f, 0, 0};
-static VelocityController leftCtrl(left_config);
-static VelocityController rightCtrl(right_config);
-// lookahead, wheel_base, kp_omega, kd_omega
-static PurePursuitPD purePursuit(0, 0, 0, 0);
-struct wheelVelocity wheel_ref = {0, 0};//purepursuit writes this
-std::vector<Point> current_path; // pure pursuit reads this & algorithm writes this
-
-float wrapAngle(float angle){
-  while(angle > 180) angle -= 360;
-  while(angle < -180) angle += 360;
-  return angle;
-}
-
+//na2alt all global variables fy app_main.h kol el global variables in one place insha2allah b2ezn allah maye7salsh moshkela
 
 ////////////////////////////////////////////////TASKS////////////////////////////////////////////////////
 void StartDefaultTask_run(void *arg)
@@ -148,24 +53,37 @@ void motionTask_run(void *arg)
   // iir filter
   // write position
   const float mm_per_tick = (float)M_PI * WHEEL_DIAMETER / ENCODER_CPR; // meter of travel per encoder tick
-  ButterworthIIR velL;
-  ButterworthIIR velR;
   double dt = 0.005; // TODO: is it better to calculate dt every loop?
   velL.init(1,200.0f );     // cutoff freq, sample rate 5ms
   velR.init(1,200.0f );
   velL.reset();
   velR.reset();
+  for(int i=0;i<6;i++){
+    ir_iir[i].init(1,200.0f);//TODO:cutoff frequency, sample rate
+    ir_iir[i].reset();
+  }
 
   EncoderCount_t left_count = (EncoderCount_t)__HAL_TIM_GET_COUNTER(&ENCODER_LEFT_TIM);
   EncoderCount_t right_count = (EncoderCount_t)__HAL_TIM_GET_COUNTER(&ENCODER_RIGHT_TIM);
   EncoderCount_t lastCountL = 0;
   EncoderCount_t lastCountR = 0;
   MotionType lastMotionTypeMotion = STOP;
-
+  uint32_t notifiedValue;
   for (;;)
   {
-    vTaskDelayUntil(&last, pdMS_TO_TICKS(5));
-    // raw counts
+    BaseType_t gotNotification = xTaskNotifyWait(
+            0x00,                              
+            ULONG_MAX,                         
+            &notifiedValue,
+            pdMS_TO_TICKS(5));     
+
+    if(gotNotification == pdTRUE && notifiedValue)
+    {
+      processIrBuffer(ir_adc_buf);
+      for(int i=0;i<6;i++){
+        ir_readings[i] = ir_iir[i].filter(ir_readings[i]);
+      }
+    }
     
     EncoderCount_t countL = (EncoderCount_t)__HAL_TIM_GET_COUNTER(&ENCODER_LEFT_TIM);
     EncoderCount_t countR = (EncoderCount_t)__HAL_TIM_GET_COUNTER(&ENCODER_RIGHT_TIM);
@@ -198,7 +116,6 @@ void motionTask_run(void *arg)
       error generated from purepursuit is corrected by the IRs later
       the error should be negligible for one turn
     */
-  
     
     if(motionType != lastMotionTypeMotion){
       //do i reset these? ana mayla le both reset or not reset so idk
@@ -256,8 +173,7 @@ void controlTask_run(void *arg)
   {
     vTaskDelayUntil(&last, pdMS_TO_TICKS(5));
     
-    
-
+  
     taskENTER_CRITICAL();
     Pose current_pose = position;
     double v_measured = robot_velocity.v;
@@ -378,6 +294,33 @@ void loggerTask_run(void * arg)
   {
     
   }
+}
+
+extern "C" void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef *hadc)
+{
+    if (hadc->Instance == ADC1)
+    {
+        __HAL_TIM_DISABLE(&htim8);
+        __HAL_TIM_SET_COUNTER(&htim8, 0);
+
+        BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+        xTaskNotifyFromISR(motionTaskHandle, IR_BUFFER_READY, eSetBits, &xHigherPriorityTaskWoken);
+        portYIELD_FROM_ISR(xHigherPriorityTaskWoken);
+    }
+}
+
+void processIrBuffer(uint32_t * buf){
+  //TODO: 3ala asas en el ranking goes like this --> side,diagonal,front // ehna mota7akemeen ay haga 3ayzenha el mohem yeb2a consistent
+  
+    ir_readings[0] = buf[0] & 0x0FFF;
+    ir_readings[1] = (buf[0] >> 16) & 0x0FFF;
+
+    ir_readings[2] = buf[1] & 0x0FFF;
+    ir_readings[3] = (buf[1] >> 16) & 0x0FFF;
+
+    ir_readings[4] = buf[2] & 0x0FFF;
+    ir_readings[5] = (buf[2] >> 16) & 0x0FFF;
+
 }
 //////////////////////////////////////////////////END TASKS//////////////////////////////////////////////
 void app_main() {
