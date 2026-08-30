@@ -142,30 +142,18 @@ int main(void) {
   /* USER CODE BEGIN WHILE */
   while (1) {
     /* USER CODE END WHILE */
-// ADC1->CR2 |= ADC_CR2_SWSTART;
 
     if(dma_ready==1){
       dma_ready = 0;
       ir_readings[0] = adc_readings[0];
       ir_readings[1] = adc_readings[1];
       ir_readings[2] = adc_readings[2];
-      // printf("dma fired\n");
+      // printf("dma fired  ");
     }
-    
-// printf("ADC CR2 = 0x%08lx\r\n", ADC1->CR2);
-// printf("DMA CR  = 0x%08lx\r\n", DMA2_Stream0->CR);
-
-
-
 
     printf("%u   %u   %u \n",ir_readings[0],ir_readings[1],ir_readings[2]);
-    // printf("%ld\n",TIM5->CNT);
-    // printf("ADC: %ld %ld %lu\n", ADC1->CR2, ADC1->SR, ADC1->CR1);
-    // printf("tim4: cnt=%lu ccr4=%lu sr=%lu\n", TIM4->CNT, TIM4->CCR4, TIM4->SR);
-    // printf("dma: ndtr=%lu en=%lu lisr=%lu\n",
-    //    DMA2_Stream0->NDTR,
-    //    DMA2_Stream0->CR & 1,
-    //    DMA2->LISR);
+    // printf("tim4->CNT = %ld   tim5->CNT = %ld\n",TIM4->CNT,TIM5->CNT);
+    
     /* USER CODE BEGIN 3 */
   }
   /* USER CODE END 3 */
@@ -265,6 +253,7 @@ static void MX_ADC1_Init(void) {
   /** Configure for the selected ADC regular channel its corresponding rank in
    * the sequencer and its sample time.
    */
+  sConfig.Channel = ADC_CHANNEL_4;
   sConfig.Rank = 2;
   if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK) {
     Error_Handler();
@@ -273,6 +262,7 @@ static void MX_ADC1_Init(void) {
   /** Configure for the selected ADC regular channel its corresponding rank in
    * the sequencer and its sample time.
    */
+  sConfig.Channel = ADC_CHANNEL_5;
   sConfig.Rank = 3;
   if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK) {
     Error_Handler();
@@ -445,8 +435,8 @@ static void MX_GPIO_Init(void) {
 void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef *hadc)
 {
   // printf("ADC fired\n");
-  // __HAL_TIM_DISABLE(&htim5);
-  // __HAL_TIM_SET_COUNTER(&htim5, 0);
+  __HAL_TIM_DISABLE(&htim5);
+  __HAL_TIM_SET_COUNTER(&htim5, 0);
   dma_ready = 1;
 
 }
