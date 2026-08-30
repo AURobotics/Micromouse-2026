@@ -18,6 +18,11 @@
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
+#include "stdio.h"
+
+void SWO_Init(void);
+void motionTask(void *pvParameters);
+// #include "app_main.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
@@ -55,6 +60,7 @@ uint32_t ir_sequence[9] = {
 };
 
 uint16_t adc_readings[3] = {0};
+uint16_t ir_readings[3] = {0};
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -70,7 +76,7 @@ static void MX_TIM4_Init(void);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
-
+char dma_ready = 0;
 /* USER CODE END 0 */
 
 /**
@@ -110,6 +116,7 @@ int main(void) {
 
   // starts ADC dma
   HAL_ADC_Start_DMA(&hadc1, (uint32_t *)adc_readings, 3);
+  
   //starts IR pwm
   HAL_TIM_PWM_Start(&htim5, TIM_CHANNEL_1);
   HAL_TIM_PWM_Start(&htim5, TIM_CHANNEL_2);
@@ -125,14 +132,40 @@ int main(void) {
 
 
   // starts the master 1000 Hz timer
+  HAL_TIM_PWM_Start(&htim4, TIM_CHANNEL_4);
   HAL_TIM_Base_Start(&htim4);
+
+  ir_readings[0] = 99;
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   while (1) {
     /* USER CODE END WHILE */
+// ADC1->CR2 |= ADC_CR2_SWSTART;
 
+    if(dma_ready==1){
+      dma_ready = 0;
+      ir_readings[0] = adc_readings[0];
+      ir_readings[1] = adc_readings[1];
+      ir_readings[2] = adc_readings[2];
+      // printf("dma fired\n");
+    }
+    
+// printf("ADC CR2 = 0x%08lx\r\n", ADC1->CR2);
+// printf("DMA CR  = 0x%08lx\r\n", DMA2_Stream0->CR);
+
+
+
+
+    printf("%u   %u   %u \n",ir_readings[0],ir_readings[1],ir_readings[2]);
+    // printf("%ld\n",TIM5->CNT);
+    // printf("ADC: %ld %ld %lu\n", ADC1->CR2, ADC1->SR, ADC1->CR1);
+    // printf("tim4: cnt=%lu ccr4=%lu sr=%lu\n", TIM4->CNT, TIM4->CCR4, TIM4->SR);
+    // printf("dma: ndtr=%lu en=%lu lisr=%lu\n",
+    //    DMA2_Stream0->NDTR,
+    //    DMA2_Stream0->CR & 1,
+    //    DMA2->LISR);
     /* USER CODE BEGIN 3 */
   }
   /* USER CODE END 3 */
@@ -211,8 +244,10 @@ static void MX_ADC1_Init(void) {
   hadc1.Init.ExternalTrigConv = ADC_EXTERNALTRIGCONV_T4_CC4;
   hadc1.Init.DataAlign = ADC_DATAALIGN_RIGHT;
   hadc1.Init.NbrOfConversion = 3;
-  hadc1.Init.DMAContinuousRequests = DISABLE;
+  // hadc1.Init.DMAContinuousRequests = DISABLE;
+  hadc1.Init.DMAContinuousRequests = ENABLE;
   hadc1.Init.EOCSelection = ADC_EOC_SINGLE_CONV;
+  hdma_adc1.Init.Mode = DMA_CIRCULAR;
   if (HAL_ADC_Init(&hadc1) != HAL_OK) {
     Error_Handler();
   }
@@ -270,19 +305,33 @@ static void MX_TIM4_Init(void) {
   htim4.Init.Period = 1000;
   htim4.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
   htim4.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_ENABLE;
+  TIM_OC_InitTypeDef sConfigOC = {0}; 
   if (HAL_TIM_Base_Init(&htim4) != HAL_OK) {
     Error_Handler();
   }
+
+  if (HAL_TIM_OC_Init(&htim4) != HAL_OK) {
+    Error_Handler();
+  }
+
   sClockSourceConfig.ClockSource = TIM_CLOCKSOURCE_INTERNAL;
   if (HAL_TIM_ConfigClockSource(&htim4, &sClockSourceConfig) != HAL_OK) {
     Error_Handler();
   }
+
+  sConfigOC.OCMode = TIM_OCMODE_PWM2;
+  sConfigOC.Pulse = 500;
+  sConfigOC.OCPolarity = TIM_OCPOLARITY_HIGH;
+  sConfigOC.OCFastMode = TIM_OCFAST_DISABLE;
+  if (HAL_TIM_PWM_ConfigChannel(&htim4, &sConfigOC, TIM_CHANNEL_4) != HAL_OK) {
+    Error_Handler();
+  }
+
   sMasterConfig.MasterOutputTrigger = TIM_TRGO_ENABLE;
   sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_ENABLE;
   if (HAL_TIMEx_MasterConfigSynchronization(&htim4, &sMasterConfig) != HAL_OK) {
     Error_Handler();
   }
-  /* USER CODE BEGIN TIM4_Init 2 */
 
   /* USER CODE END TIM4_Init 2 */
 }
@@ -385,7 +434,6 @@ static void MX_GPIO_Init(void) {
   /* GPIO Ports Clock Enable */
   __HAL_RCC_GPIOH_CLK_ENABLE();
   __HAL_RCC_GPIOA_CLK_ENABLE();
-
   /* USER CODE BEGIN MX_GPIO_Init_2 */
 
   /* USER CODE END MX_GPIO_Init_2 */
@@ -394,9 +442,38 @@ static void MX_GPIO_Init(void) {
 /* USER CODE BEGIN 4 */
 
 // ADC DMA Callback function
-void HAL_ADC_ConvHalfCpltCallback(ADC_HandleTypeDef *hadc)
+void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef *hadc)
 {
+  // printf("ADC fired\n");
+  // __HAL_TIM_DISABLE(&htim5);
+  // __HAL_TIM_SET_COUNTER(&htim5, 0);
+  dma_ready = 1;
 
+}
+
+int _write(int file, char *ptr, int len)
+{
+    for (int i = 0; i < len; i++)
+    {
+        ITM_SendChar((uint32_t)ptr[i]);
+    }
+    return len;
+}
+
+void SWO_Init(void)//in order to use ITM_SendChar
+{
+    // Enable trace subsystem
+    CoreDebug->DEMCR |= CoreDebug_DEMCR_TRCENA_Msk;
+
+    // TPIU/ITM config — assumes core clock known, SWO baud rate e.g. 2000000
+    *((volatile unsigned int*)0xE0040010) = HAL_RCC_GetHCLKFreq() / 2000000 - 1; // TPIU prescaler for SWO baud
+
+    *((volatile unsigned int*)0xE00400F0) = 2; // Selected PIN Protocol Register: 2 = NRZ
+
+    // Enable ITM, port 0
+    ITM->LAR = 0xC5ACCE55;       // Unlock
+    ITM->TCR = ITM_TCR_ITMENA_Msk | ITM_TCR_SYNCENA_Msk;
+    ITM->TER = 1;                 // Enable stimulus port 0
 }
 /* USER CODE END 4 */
 
