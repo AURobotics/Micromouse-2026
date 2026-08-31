@@ -440,6 +440,7 @@ void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef *hadc)
     // stop
     HAL_TIM_Base_Stop(&htim2);
     __HAL_TIM_SET_COUNTER(&htim2, 0);
+    __HAL_TIM_SetCompare(&htim2, 1, 1260);
     HAL_TIM_GenerateEvent(&htim2, TIM_EVENTSOURCE_UPDATE);
     __HAL_TIM_CLEAR_FLAG(&htim2, TIM_FLAG_UPDATE);
   }
