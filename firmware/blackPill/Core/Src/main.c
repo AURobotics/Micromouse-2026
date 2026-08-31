@@ -117,10 +117,19 @@ int main(void)
   HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_3);
   HAL_TIM_OC_Start(&htim2, TIM_CHANNEL_4);
 
-  // starts pwm write sequence
-  HAL_TIM_DMABurst_WriteStart(&htim2, TIM_DMABASE_CCR1, TIM_DMA_CC4,
-                              (uint32_t *)ir_sequence,
-                              TIM_DMABURSTLENGTH_3TRANSFERS);
+  // // starts pwm write sequence
+  // HAL_TIM_DMABurst_WriteStart(&htim2, TIM_DMABASE_CCR1, TIM_DMA_CC4,
+  //                             (uint32_t *)ir_sequence,
+  //                             TIM_DMABURSTLENGTH_3TRANSFERS);
+
+  // 1. Tell TIM2 to expect a 3-transfer burst starting at CCR1
+  htim2.Instance->DCR = TIM_DMABURSTLENGTH_3TRANSFERS | TIM_DMABASE_CCR1;
+
+  // 2. Start the DMA transfer manually (Full array length of 9)
+  HAL_DMA_Start_IT(htim2.hdma[TIM_DMA_ID_CC4], (uint32_t)ir_sequence, (uint32_t)&htim2.Instance->DMAR, 9);
+
+  // 3. Enable the CC4 DMA request in the timer
+  __HAL_TIM_ENABLE_DMA(&htim2, TIM_DMA_CC4);
 
 
   // starts the master 1000 Hz timer
@@ -325,7 +334,7 @@ static void MX_TIM2_Init(void)
   {
     Error_Handler();
   }
-  sConfigOC.OCMode = TIM_OCMODE_ACTIVE;
+  sConfigOC.OCMode = TIM_OCMODE_PWM2;
   sConfigOC.Pulse = 1050;
   if (HAL_TIM_OC_ConfigChannel(&htim2, &sConfigOC, TIM_CHANNEL_4) != HAL_OK)
   {
