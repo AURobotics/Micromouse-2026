@@ -21,7 +21,7 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-
+#include "stdio.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -48,13 +48,15 @@ TIM_HandleTypeDef htim4;
 DMA_HandleTypeDef hdma_tim2_ch4_up;
 
 /* USER CODE BEGIN PV */
-uint32_t ir_sequence[9] = {
+uint16_t ir_sequence[9] = {
     0, 1260,    0,   // Pulse 1: Only Channel 2 is ON
     0,    0, 1260,   // Pulse 2: Only Channel 3 is ON
     1260,    0,    0 // Pulse 3: Only Channel 1 is ON
 };
 
 uint16_t adc_readings[3] = {0};
+uint16_t ir_readings[3] = {99};
+int dma_ready = 0;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -142,6 +144,15 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
+    if(dma_ready)
+    {
+      dma_ready = 0;
+      ir_readings[0] = adc_readings[0];
+      ir_readings[1] = adc_readings[1];
+      ir_readings[2] = adc_readings[2];
+    }
+
+    printf("%u  %u  %u\n", ir_readings[0], ir_readings[1],ir_readings[2]);
   }
   /* USER CODE END 3 */
 }
@@ -441,7 +452,33 @@ void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef *hadc)
     __HAL_TIM_SetCompare(&htim2, 0, 1260);
     HAL_TIM_GenerateEvent(&htim2, TIM_EVENTSOURCE_UPDATE);
     __HAL_TIM_CLEAR_FLAG(&htim2, TIM_FLAG_UPDATE);
+    dma_ready = 1;      
   }
+}
+
+int _write(int file, char *ptr, int len)
+{
+    for (int i = 0; i < len; i++)
+    {
+        ITM_SendChar((uint32_t)ptr[i]);
+    }
+    return len;
+}
+
+void SWO_Init(void)//in order to use ITM_SendChar
+{
+    // Enable trace subsystem
+    CoreDebug->DEMCR |= CoreDebug_DEMCR_TRCENA_Msk;
+
+    // TPIU/ITM config — assumes core clock known, SWO baud rate e.g. 2000000
+    *((volatile unsigned int*)0xE0040010) = HAL_RCC_GetHCLKFreq() / 2000000 - 1; // TPIU prescaler for SWO baud
+
+    *((volatile unsigned int*)0xE00400F0) = 2; // Selected PIN Protocol Register: 2 = NRZ
+
+    // Enable ITM, port 0
+    ITM->LAR = 0xC5ACCE55;       // Unlock
+    ITM->TCR = ITM_TCR_ITMENA_Msk | ITM_TCR_SYNCENA_Msk;
+    ITM->TER = 1;                 // Enable stimulus port 0
 }
 /* USER CODE END 4 */
 
