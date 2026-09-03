@@ -45,11 +45,18 @@ target_link_directories(${CMAKE_PROJECT_NAME} PRIVATE
 # Add sources to executable
 target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     # Add user sources here
+    Core/lib/eeprom/eeprom.c
+    Core/Src/app_main.cpp
+    Core/lib/IIRFilter/iirFilter.cpp
+    
 )
 
 # Add include paths
 target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
     # Add user defined include paths
+    Core/lib/eeprom
+    Core/lib/IIRFilter
+    Core/Inc
 )
 
 # Add project symbols (macros)
