@@ -152,10 +152,7 @@ int main(void)
   HAL_TIM_PWM_Start(&htim4, TIM_CHANNEL_4);
   HAL_TIM_Base_Start(&htim4);
 
-  ir_readings[0] = 99;
-  */
- int16_t speed = 5;
- int16_t value = 5;
+  
   /* USER CODE END 2 */
 
   /* Init scheduler */

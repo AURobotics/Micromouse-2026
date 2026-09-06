@@ -13,6 +13,7 @@
 // #include "feedforward_pi.h"
 #include "iirFilter.h"
 #include "eeprom.h"
+#include "BNO055.h"
 // #include "PDcontroller.h"
 #include "math.h"
 #include "stdio.h"
@@ -69,44 +70,65 @@ void StartDefaultTask_run(void *arg)
   //   motor_speed(100);
 
   /////////////////////////////////////////testingeeprom////////////////////////////////////
-  int first = 1;
-  while (1)
-  {
-    vTaskDelay(pdMS_TO_TICKS(500));
+  // int first = 1;
+  // while (1)
+  // {
+  //   vTaskDelay(pdMS_TO_TICKS(500));
 
-    if (first)
-    {
-      int16_t fake_calib[11] = {-21,15,3,189,-496,57,2,0,-1,1000,957};
-      uint8_t calib_buf[22];
-      memcpy(calib_buf, fake_calib, sizeof(calib_buf));
+  //   if (first)
+  //   {
+  //     int16_t fake_calib[11] = {-21,15,3,189,-496,57,2,0,-1,1000,957};
+  //     uint8_t calib_buf[22];
+  //     memcpy(calib_buf, fake_calib, sizeof(calib_buf));
       
-      if (writeCalibration(&hi2c1, 20, calib_buf, 22))
-      {
-        printf("yay wrote calibration successfully!\n");
-        first = 0;
-        vTaskDelay(pdMS_TO_TICKS(2000));
-      }
-      else
-      {
-        printf(":( didnt write calibration on eeprom\n trying again...\n");
-        first = 1;
-      }
-    }
-    else
-    {
-      uint8_t read_data[22];
-      if (readCalibration(&hi2c1, 20, read_data, 22))
-      {
-        int16_t calib_data[11];
-        memcpy(calib_data,read_data,22);
-        for (int i = 0; i < 11; i++)
-        {
-          printf("%d ", calib_data[i]);
-        }
-        printf("\n");
-        vTaskDelay(pdMS_TO_TICKS(2000));
-      }
-    }
+  //     if (writeCalibration(&hi2c1, 20, calib_buf, 22))
+  //     {
+  //       printf("yay wrote calibration successfully!\n");
+  //       first = 0;
+  //       vTaskDelay(pdMS_TO_TICKS(2000));
+  //     }
+  //     else
+  //     {
+  //       printf(":( didnt write calibration on eeprom\n trying again...\n");
+  //       first = 1;
+  //     }
+  //   }
+  //   else
+  //   {
+  //     uint8_t read_data[22];
+  //     if (readCalibration(&hi2c1, 20, read_data, 22))
+  //     {
+  //       int16_t calib_data[11];
+  //       memcpy(calib_data,read_data,22);
+  //       for (int i = 0; i < 11; i++)
+  //       {
+  //         printf("%d ", calib_data[i]);
+  //       }
+  //       printf("\n");
+  //       vTaskDelay(pdMS_TO_TICKS(2000));
+  //     }
+  //   }
+  // }
+
+  /////////////////////////////////////////testing BNO///////////////////////////////////////////////////
+
+  printf("right before bno..\n");
+  imu bno(&hi2c1,0x29);
+  bno.init();
+  printf("done with init bno yay!\n");
+  while(1)
+  {
+    vec_3 euler = bno.euler();
+    printf("euler: %.2f %.2f %.2f",euler.x(),euler.y(),euler.z());
+    vTaskDelay(pdMS_TO_TICKS(10));
+
+    vec_3 gyro = bno.gyro();
+    printf("   gyro: %.2f %.2f %.2f",gyro.x(),gyro.y(),gyro.z());
+    vTaskDelay(pdMS_TO_TICKS(10));
+
+    vec_3 mag = bno.mag();
+    printf("   mag: %.2f %.2f %.2f\n",mag.x(),mag.y(),mag.z());
+    vTaskDelay(pdMS_TO_TICKS(10));
   }
 }
 
