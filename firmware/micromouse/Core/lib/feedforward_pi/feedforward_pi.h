@@ -13,10 +13,10 @@ struct FFPIConfig {
     float kI = 0.0f;
 
     // Output / integral limits 
-    float outputMin = -255.0f;
-    float outputMax = 255.0f;
-    float integralMin = -255.0f;
-    float integralMax = 255.0f;
+    float outputMin = -100.0f;
+    float outputMax = 100.0f;
+    float integralMin = -100.0f;
+    float integralMax = 100.0f;
 };
 
 struct FFPIDebug {

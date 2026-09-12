@@ -12,7 +12,73 @@
 #include "feedforward_pi.h"
 #include "iirFilter.h"
 #include "PDcontroller.h"
+#include "BNO055.h"
 
+////////////////////////////////////////////////GLOBAL VARIABLES////////////////////////////////////////////////////////////
+//sorry na2altohom kolohom hena 3ashan some c/c++ sh!t kan nefsy a7otohom fy app_main.h bas mashakel w mesh adra
+typedef uint32_t EncoderCount_t; // adjust 3la 16 bit or 32 bit based on the encoder timer
+// tim2 and timer 5 -->32 bit
+// tim3 and timer 4 -->16 bit
+// use this to know the type of motion 3ashan ne center the robot only in STRAIGHT segments algorithm task controls it
+enum MotionType
+{
+  STRAIGHT,
+  STOP,
+  TURN,
+};
+typedef struct {
+  enum MotionType type;
+} MotionCommand_t;
+
+/*
+  not sure abt this?? algorithm needs to know if the robot finished turning to read new walls and decide the new tile to move to
+  fa 3ashan keda nestakhdem motion status
+*/
+typedef struct
+{
+  int status; // 0 = done, 1 = running
+} MotionStatus_t;
+
+struct velocity
+{
+  double v;     // m/s
+  double omega; // rad/s
+  double vL;    // m/s    left wheel
+  double vR;    // m/s     right wheel
+};
+/* wrap reading/writing structs aw variables related le ba3d b taskENTER_CRITICAL() and taskEXIT_CRITICAL()
+  bas keep them short and fast with no blocking functions inside
+  3ashan mayektebsh half the data and then ye7sal interrupt fa yeb2a nos el data new w nos old*/
+
+vec_3 euler;//TODO:IMPORTANT CHECK THE UNITS OF EULER 
+vec_3 gyro;
+
+volatile uint32_t adc_dma_buffer[3];
+uint16_t ir_sequence[9] = {//TODO:check this
+    0, 1260,    0,   // Pulse 1: Only Channel 2 is ON
+    0,    0, 1260,   // Pulse 2: Only Channel 3 is ON
+    1260,    0,    0 // Pulse 3: Only Channel 1 is ON
+};
+
+bool walls[3] = {0};
+double ir_readings[6] = {0}; // left_front, right_front, left,right,left_diag, right_diag
+double ir_distance[6] = {0};
+struct Pose position = {0, 0, 0};
+struct velocity robot_velocity = {0, 0, 0, 0};
+
+QueueHandle_t motionCmdQueue;
+QueueHandle_t motionStatusQueue; // queue 3ashan ye trigger algorithm when status changes
+MotionType motionType = STOP;
+double target_v;
+// TODO: tune these // km_ff tau_ff kp ki
+FFPIConfig left_config = {0.05f, 0.12f, 0, 0};
+FFPIConfig right_config = {0.05f, 0.12f, 0, 0};
+VelocityController leftCtrl(left_config);
+VelocityController rightCtrl(right_config);
+// lookahead, wheel_base, kp_omega, kd_omega
+static PurePursuitPD purePursuit(0, 0, 0, 0);
+struct wheelVelocity wheel_ref = {0, 0};//purepursuit writes this
+std::vector<Point> current_path; // pure pursuit reads this & algorithm writes this
 
 
 /* TODO: Calibrate adc, check adc calibration modes...
@@ -23,14 +89,87 @@
 * w el tasks and stuff cpp 
 */
 
-
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 float wrapAngle(float angle){
   while(angle > 180) angle -= 360;
   while(angle < -180) angle += 360;
   return angle;
 }
 
+// ADC DMA Callback function
+extern "C" void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef *hadc)
+{
+  if (hadc->Instance == ADC1) {
+    // stop
+    HAL_TIM_Base_Stop(&htim2);
+    __HAL_TIM_SET_COUNTER(&htim2, 0);
+    __HAL_TIM_SetCompare(&htim2, 0, 1260);
+    HAL_TIM_GenerateEvent(&htim2, TIM_EVENTSOURCE_UPDATE);
+    __HAL_TIM_CLEAR_FLAG(&htim2, TIM_FLAG_UPDATE);
 
+    BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+    vTaskNotifyGiveFromISR((TaskHandle_t) MotionTaskHandle, &xHigherPriorityTaskWoken);
+    portYIELD_FROM_ISR(xHigherPriorityTaskWoken); 
+  }
+}
+//printf->SWO
+int _write(int file, char *ptr, int len)
+{
+    for (int i = 0; i < len; i++)
+    {
+        ITM_SendChar((uint32_t)ptr[i]);
+    }
+    return len;
+}
+
+void SWO_Init(void)//in order to use ITM_SendChar
+{
+    // Enable trace subsystem
+    CoreDebug->DEMCR |= CoreDebug_DEMCR_TRCENA_Msk;
+
+    // TPIU/ITM config — assumes core clock known, SWO baud rate e.g. 2000000
+    *((volatile unsigned int*)0xE0040010) = HAL_RCC_GetHCLKFreq() / 2000000 - 1; // TPIU prescaler for SWO baud
+
+    *((volatile unsigned int*)0xE00400F0) = 2; // Selected PIN Protocol Register: 2 = NRZ
+
+    // Enable ITM, port 0
+    ITM->LAR = 0xC5ACCE55;       // Unlock
+    ITM->TCR = ITM_TCR_ITMENA_Msk | ITM_TCR_SYNCENA_Msk;
+    ITM->TER = 1;                 // Enable stimulus port 0
+}
+
+void motor_speeds(int16_t left_duty,int16_t right_duty){
+  left_duty *= 9.99;
+  right_duty *= 9.99;
+
+  if(left_duty>999) left_duty = 999;
+  if(left_duty<-999) left_duty = -999;
+  if(right_duty>999) right_duty= 999;
+  if(right_duty<-999) right_duty = -999;
+
+  //TODO: define channels
+  //   if (right_duty >= 0)
+  // {
+  //     __HAL_TIM_SET_COMPARE(&htim1, MOTOR_RIGHT_FORWARD_CHANNEL, right_duty);
+  //     __HAL_TIM_SET_COMPARE(&htim1, MOTOR_RIGHT_BACKWARD_CHANNEL, 0);
+  // }
+  // else
+  // {
+  //     __HAL_TIM_SET_COMPARE(&htim1, MOTOR_RIGHT_FORWARD_CHANNEL, 0);
+  //     __HAL_TIM_SET_COMPARE(&htim1, MOTOR_RIGHT_BACKWARD_CHANNEL, -right_duty);
+  // }
+
+  //   if (left_duty >= 0)
+  // {
+  //     __HAL_TIM_SET_COMPARE(&htim1, MOTOR_RIGHT_FORWARD_CHANNEL, left_duty);
+  //     __HAL_TIM_SET_COMPARE(&htim1, MOTOR_RIGHT_BACKWARD_CHANNEL, 0);
+  // }
+  // else
+  // {
+  //     __HAL_TIM_SET_COMPARE(&htim1, MOTOR_RIGHT_FORWARD_CHANNEL, 0);
+  //     __HAL_TIM_SET_COMPARE(&htim1, MOTOR_RIGHT_BACKWARD_CHANNEL, -left_duty);
+  // }
+}
 ////////////////////////////////////////////////TASKS////////////////////////////////////////////////////
 void StartDefaultTask_run(void *arg)
 {
@@ -44,11 +183,17 @@ void StartDefaultTask_run(void *arg)
 void bnoTask_run(void *arg)
 {
   TickType_t last = xTaskGetTickCount();
+  imu bno(&hi2c2,0x29);//TODO: check address with physical connection
+  bno.init();
   for (;;)
   {
     vTaskDelayUntil(&last, pdMS_TO_TICKS(10));
-    // read i2c
-    // write euler, gyro
+    vec_3 v = bno.euler();
+    vec_3 u = bno.gyro();
+    taskENTER_CRITICAL();
+    euler = v;
+    gyro = u;
+    taskEXIT_CRITICAL();
   }
 }
 
@@ -57,41 +202,52 @@ void motionTask_run(void *arg)
   TickType_t last = xTaskGetTickCount();
 
   // iir filter
+  ButterworthIIR ir_iir[6];
+  for(int i=0;i<6;i++) ir_iir[i].init(1,200.0f); //TODO:tune
   // write position
   const float mm_per_tick = (float)M_PI * WHEEL_DIAMETER / ENCODER_CPR; // meter of travel per encoder tick
   ButterworthIIR velL;
   ButterworthIIR velR;
-  double dt = 0.005; // TODO: is it better to calculate dt every loop?
-  velL.init(1,200.0f );     // cutoff freq, sample rate 5ms
+  double dt = 0.005; 
+  velL.init(1,200.0f );     //TODO: cutoff freq, sample rate 5ms
   velR.init(1,200.0f );
   velL.reset();
   velR.reset();
 
-  EncoderCount_t left_count = (EncoderCount_t)__HAL_TIM_GET_COUNTER(&ENCODER_LEFT_TIM);
-  EncoderCount_t right_count = (EncoderCount_t)__HAL_TIM_GET_COUNTER(&ENCODER_RIGHT_TIM);
+  EncoderCount_t countL = (EncoderCount_t)__HAL_TIM_GET_COUNTER(&ENCODER_LEFT_TIM);
+  EncoderCount_t countR = (EncoderCount_t)__HAL_TIM_GET_COUNTER(&ENCODER_RIGHT_TIM);
   EncoderCount_t lastCountL = 0;
   EncoderCount_t lastCountR = 0;
   MotionType lastMotionTypeMotion = STOP;
 
   for (;;)
   {
-    //TODO: iir filter on IRS
-    vTaskDelayUntil(&last, pdMS_TO_TICKS(5));
-    // raw counts
-    
-    //TODO: overflow logic for 16bit timer
-    EncoderCount_t countL = (EncoderCount_t)__HAL_TIM_GET_COUNTER(&ENCODER_LEFT_TIM);
-    EncoderCount_t countR = (EncoderCount_t)__HAL_TIM_GET_COUNTER(&ENCODER_RIGHT_TIM);
+    ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+    ////////////////////////////IRS//////////////////////
+    taskENTER_CRITICAL();
+    for(int i=0;i<6;i+=2){
+      ir_readings[i] = adc_dma_buffer[i/2] & 0xFFFF;
+      ir_readings[i+1] = (adc_dma_buffer[i/2] >> 16) & 0xFFFF;
 
-    int32_t deltaL = (int32_t)(EncoderCount_t)(countL - lastCountL);
-    int32_t deltaR = (int32_t)(EncoderCount_t)(countR - lastCountR);
-    if (sizeof(EncoderCount_t) == sizeof(uint16_t))
-    {
-      deltaL = (int16_t)deltaL;
-      deltaR = (int16_t)deltaR;
+      //iir filter
+      ir_readings[i] = ir_iir[i].filter(ir_readings[i]);
+      ir_readings[i+1] = ir_iir[i+1].filter(ir_readings[i+1]);
     }
+    taskEXIT_CRITICAL();
+
+
+    ///////////////////////ENCODERS/////////////////////
+    // overflow logic for 16bit timer tim3
+    uint16_t raw_R = __HAL_TIM_GET_COUNTER(&ENCODER_RIGHT_TIM);
+    int32_t deltaR = (int16_t)(raw_R - lastCountR);
+    countR += deltaR;
+
+    countL = (EncoderCount_t)__HAL_TIM_GET_COUNTER(&ENCODER_LEFT_TIM);
+    int32_t deltaL = (int32_t)(EncoderCount_t)(countL - lastCountL);
+
     lastCountL = countL;
-    lastCountR = countR;
+    lastCountR = raw_R;
+    
 
     // --- counts -> distance (m) -> raw velocity (m/s) ---
     float rawVelL = (deltaL * mm_per_tick) / ENCODER_TASK_DT_S;
@@ -112,7 +268,6 @@ void motionTask_run(void *arg)
       the error should be negligible for one turn
     */
   
-    
     if(motionType != lastMotionTypeMotion){
       //do i reset these? ana mayla le both reset or not reset so idk
       leftCtrl.reset();
@@ -123,8 +278,17 @@ void motionTask_run(void *arg)
     wheelVelocity wheel_speed = wheel_ref;
     taskEXIT_CRITICAL();
 
-    double left_cmd = leftCtrl.compute(wheel_speed.left,velLfiltered,dt);
-    double right_cmd = rightCtrl.compute(wheel_speed.right,velRfiltered,dt);
+    double left_cmd,right_cmd;
+    if(motionType == STOP)
+    {
+      left_cmd = 0;
+      right_cmd = 0;
+    }
+    else 
+    {
+      left_cmd = leftCtrl.compute(wheel_speed.left,velLfiltered,dt);
+      right_cmd = rightCtrl.compute(wheel_speed.right,velRfiltered,dt);
+    }
     
     // update global
     // 2 critical blocks 3ashan mesh taba3 ba3d w law 3ayez ye3mel interrupt mabenhom no problem
@@ -141,12 +305,8 @@ void motionTask_run(void *arg)
     robot_velocity.vR = velRfiltered;
     taskEXIT_CRITICAL();
      // target v and motion type are written by alogo task and read inside controller&motion tasks f kda b acess el motiontype w target v atomatically
-    taskENTER_CRITICAL();
-    MotionType current_motion = motionType;
-    double current_target_v = target_v;
-    taskEXIT_CRITICAL();
     
-    // TODO:drive motors dont know pins and stuff yet
+    motor_speeds(left_cmd,right_cmd);
   }
 }
 
@@ -154,8 +314,8 @@ void motionTask_run(void *arg)
 void controlTask_run(void *arg)
 {
   TickType_t last = xTaskGetTickCount();
-  double dt = 0.005; // TODO: is it better to calculate dt every loop?
-  std::vector<Point> path;
+  double dt = 0.005; 
+  
   PDController headingHoldPD(0,0,-100,100);//TODO:tune kp,kd
   PDController lateralPD(0,0,-100,100); //TODO:tune kp,kd
   float target_heading; // read only the moment we lose wall reference
@@ -169,8 +329,6 @@ void controlTask_run(void *arg)
   {
     vTaskDelayUntil(&last, pdMS_TO_TICKS(5));
     
-    
-
     taskENTER_CRITICAL();
     Pose current_pose = position;
     double v_measured = robot_velocity.v;
@@ -185,15 +343,15 @@ void controlTask_run(void *arg)
     bool wall_right = walls[2];
     taskEXIT_CRITICAL();
 
-    if(motionType != lastMotionTypeCtrl){
+    if(current_motion != lastMotionTypeCtrl){
       headingHoldPD.reset();
       lateralPD.reset();
       purePursuit.reset();    
-      lastMotionTypeCtrl = motionType;
+      lastMotionTypeCtrl = current_motion;
+      //regenerate points for purepursuit 
     }
    // emergency stop if front wall detected & 🛺 lsa mkml staright
     if (current_motion == STRAIGHT && (wall_front || front_distance < 0.02f ))  // TODO: tune threshold 
-    
     {
       taskENTER_CRITICAL();
       wheel_ref.left = 0.0;
@@ -204,10 +362,10 @@ void controlTask_run(void *arg)
       xQueueSend(motionStatusQueue, &status, 0);
       continue; // skip the rest of the loop
     }
-    if (motionType == STRAIGHT)
+    if (current_motion == STRAIGHT)
     {
       //TODO: wrap reading the walls in CRITICAL section
-      double base_v = target_v;
+      double base_v = current_target_v;
       float lateral_error = 0.0f;
       if (walls[1] && walls[2]){ // 2 side walls
         lateral_error = left_distance - right_distance;
@@ -238,15 +396,15 @@ void controlTask_run(void *arg)
       wheel_ref.right = base_v + lateral_correction;
       taskEXIT_CRITICAL();
     }
-    else if (motionType == TURN)
+    else if (current_motion == TURN)
     {
-       wheelVelocity wheel_speed = purePursuit.computeControl(current_pose, v_measured, omega_measured, target_v, path, dt);
+       wheelVelocity wheel_speed = purePursuit.computeControl(current_pose, v_measured, omega_measured, current_target_v, path_copy, dt);
           taskENTER_CRITICAL();
            wheel_ref = wheel_speed;
           taskEXIT_CRITICAL();
 
-         if (!path.empty()) {
-        const Point& goal = path.back();
+         if (!path_copy.empty()) {
+        const Point& goal = path_copy.back();
         double dist_to_goal = std::hypot(goal.x - current_pose.x, goal.y - current_pose.y);
         
         
@@ -255,7 +413,7 @@ void controlTask_run(void *arg)
         xQueueSend(motionStatusQueue, &status,0 );
       }
     }}
-    else  if (motionType == STOP){ 
+    else  if (current_motion == STOP){ 
     {    // TODO: need to make a case for STOP 
       taskENTER_CRITICAL();
       wheel_ref.left = 0;
@@ -268,12 +426,9 @@ void controlTask_run(void *arg)
 
 void algorithmTask_run(void *arg)
 {
-  MotionStatus_t status;
   for (;;)
   {
-    if (xQueueReceive(motionStatusQueue, &status, portMAX_DELAY) == pdTRUE)
-    {
-    }
+    
   }
 }
 

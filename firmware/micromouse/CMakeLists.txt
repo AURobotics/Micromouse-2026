@@ -46,10 +46,11 @@ target_link_directories(${CMAKE_PROJECT_NAME} PRIVATE
 
 # Add sources to executable
 target_sources(${CMAKE_PROJECT_NAME} PRIVATE
+    Core/Src/app_main.cpp
     Core/lib/feedforward_pi/feedforward_pi.cpp
     Core/lib/pure_pursuit/pure_pursuit.cpp
     Core/lib/IIRFilter/iirFilter.cpp
-    Core/lib/PDcontroller/PDcontroller.h
+    Core/lib/BNO055-driver/BNO055.cpp
 )
 
 # Add include paths
@@ -58,6 +59,7 @@ target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
         Core/lib/pure_pursuit
         Core/lib/IIRFilter
         Core/lib/PDcontroller
+        Core/lib/BNO055-driver
 )
 
 # Add project symbols (macros)
