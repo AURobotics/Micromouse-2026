@@ -126,9 +126,15 @@ void StartDefaultTask_run(void *arg)
     printf("   gyro: %.2f %.2f %.2f",gyro.x(),gyro.y(),gyro.z());
     vTaskDelay(pdMS_TO_TICKS(10));
 
-    vec_3 mag = bno.mag();
-    printf("   mag: %.2f %.2f %.2f\n",mag.x(),mag.y(),mag.z());
+    Calibration_t status;
+    bno.calibration_status(status);
+    printf("calib [sys:%d  gyro:%d  acc:%d  mag:%d]",status.sys,status.gyro,status.accel,status.mag);
     vTaskDelay(pdMS_TO_TICKS(10));
+    
+    uint8_t v;
+    bno.read_register(imu_registers::mode::OPR_MODE,&v,1);
+    printf("oprMode: %d\n",v);
+
   }
 }
 

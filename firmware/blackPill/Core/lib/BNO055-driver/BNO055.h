@@ -61,10 +61,10 @@ public:
     vec_4 quaternion() const;
     bool isConnected() const;
     
+    uint8_t read_register(uint8_t reg, uint8_t* buffer, uint8_t len = 8) const;
     
 private:    
     I2C_HandleTypeDef *hi2c;
     uint8_t address;
-    uint8_t read_register(uint8_t reg, uint8_t* buffer, uint8_t len = 8) const;
     HAL_StatusTypeDef write_register(uint8_t reg, uint8_t val) const;
 };

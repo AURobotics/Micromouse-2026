@@ -43,15 +43,14 @@ void imu::init()
     constexpr uint8_t unit = 1 << 2 | 1 << 1;
     write_register(imu_registers::unit::UNIT_SEL, unit);
     vTaskDelay(pdMS_TO_TICKS(10));
-    this->remap_axis(remap_axis::z_axis, remap_axis::y_axis, remap_axis::x_axis,remap_sign::positive,remap_sign::positive,remap_sign::positive);
-    /*imu mounted horizontally*/
-    /*
+    this->remap_axis(remap_axis::x_axis, remap_axis::y_axis, remap_axis::z_axis,remap_sign::negative,remap_sign::positive,remap_sign::negative);
+    /*TODO: check this on actual robot
     imu is mounted vertically
-    native_z --> x-axis
+    native_z --> negative x-axis
     native_y --> y-axis
     native_x --> negative z-axis*/
     vTaskDelay(pdMS_TO_TICKS(10));
-    set_mode(operation_mode::NDOF);
+    set_mode(operation_mode::IMU); // accel + gyro only
     vTaskDelay(pdMS_TO_TICKS(10));
 }
 
@@ -171,7 +170,8 @@ vec_3 imu::mag() const {
 }
 
 /**
- * x, y, z
+ * x      , y   , z
+ * heading, roll, pitch
  */
 vec_3 imu::euler() const {
     vec_3 v;
