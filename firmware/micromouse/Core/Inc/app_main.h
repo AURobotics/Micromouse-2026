@@ -43,6 +43,7 @@ void HMIConfigTask_run(void *arg);
 void loggerTask_run(void* arg);
 void app_main(); // This is your C++ entry function
 
+
 #ifdef __cplusplus
 }
 #endif

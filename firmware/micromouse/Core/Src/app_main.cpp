@@ -6,7 +6,6 @@
 #include "i2c.h"
 #include "tim.h"
 #include "usart.h"
-#include "queue.h"
 #include "app_main.h"
 #include "pure_pursuit.h"
 #include "feedforward_pi.h"
@@ -14,150 +13,159 @@
 #include "PDcontroller.h"
 #include "BNO055.h"
 
+#define constrain(amt, low, high) ((amt) < (low) ? (low) : ((amt) > (high) ? (high) : (amt)))
+struct queue {
+    char items[300];//MAX QUEUE SIZE 16*16=256
+    short head;
+    short tail;
+    short size=300;
+    short counter;
+};
+
 ////////////////////////////////////////////////GLOBAL VARIABLES////////////////////////////////////////////////////////////
-//sorry na2altohom kolohom hena 3ashan some c/c++ sh!t kan nefsy a7otohom fy app_main.h bas mashakel w mesh adra
+// sorry na2altohom kolohom hena 3ashan some c/c++ sh!t kan nefsy a7otohom fy app_main.h bas mashakel w mesh adra
 typedef uint32_t EncoderCount_t; // adjust 3la 16 bit or 32 bit based on the encoder timer
 // tim2 and timer 5 -->32 bit
 // tim3 and timer 4 -->16 bit
-// use this to know the type of motion 3ashan ne center the robot only in STRAIGHT segments algorithm task controls it
-enum MotionType
-{
-  STRAIGHT,
-  STOP,
-  TURN,
-};
-typedef struct {
-  enum MotionType type;
-} MotionCommand_t;
 
-/*
-  not sure abt this?? algorithm needs to know if the robot finished turning to read new walls and decide the new tile to move to
-  fa 3ashan keda nestakhdem motion status
-*/
-typedef struct
-{
-  int status; // 0 = done, 1 = running
-} MotionStatus_t;
-
-struct velocity
-{
-  double v;     // m/s
-  double omega; // rad/s
-  double vL;    // m/s    left wheel
-  double vR;    // m/s     right wheel
-};
 /* wrap reading/writing structs aw variables related le ba3d b taskENTER_CRITICAL() and taskEXIT_CRITICAL()
   bas keep them short and fast with no blocking functions inside
   3ashan mayektebsh half the data and then ye7sal interrupt fa yeb2a nos el data new w nos old*/
 
-vec_3 euler;//TODO:IMPORTANT CHECK THE UNITS OF EULER 
+vec_3 euler; // TODO:IMPORTANT CHECK THE UNITS OF EULER
 vec_3 gyro;
 
 volatile uint32_t adc_dma_buffer[3];
-uint16_t ir_sequence[9] = {//TODO:check this
-    0, 1260,    0,   // Pulse 1: Only Channel 2 is ON
-    0,    0, 1260,   // Pulse 2: Only Channel 3 is ON
-    1260,    0,    0 // Pulse 3: Only Channel 1 is ON
-};
-
+uint16_t ir_sequence[9] = {
+    // TODO:check this
+    0, 1260, 0, // Pulse 1: Only Channel 2 is ON
+    0, 0, 1260, // Pulse 2: Only Channel 3 is ON
+    1260, 0, 0  // Pulse 3: Only Channel 1 is ON
+  };
+  
 bool walls[3] = {0};
 double ir_readings[6] = {0}; // left_front, right_front, left,right,left_diag, right_diag
+double ir_thresh[6] = {0, 0, 0, 0, 0, 0};
 double ir_distance[6] = {0};
 struct Pose position = {0, 0, 0};
-struct velocity robot_velocity = {0, 0, 0, 0};
-
-QueueHandle_t motionCmdQueue;
-QueueHandle_t motionStatusQueue; // queue 3ashan ye trigger algorithm when status changes
-MotionType motionType = STOP;
-double target_v;
-// TODO: tune these // km_ff tau_ff kp ki
-FFPIConfig left_config = {0.05f, 0.12f, 0, 0};
-FFPIConfig right_config = {0.05f, 0.12f, 0, 0};
-VelocityController leftCtrl(left_config);
-VelocityController rightCtrl(right_config);
-// lookahead, wheel_base, kp_omega, kd_omega
-static PurePursuitPD purePursuit(0, 0, 0, 0);
-struct wheelVelocity wheel_ref = {0, 0};//purepursuit writes this
-std::vector<Point> current_path; // pure pursuit reads this & algorithm writes this
-
-
+double yawOffset;
+double theoreticalHeading = 0;
+imu bno(&hi2c2, 0x29); // TODO: check address with physical connection
+bool menu = false;
 /* TODO: Calibrate adc, check adc calibration modes...
 * useful links: https://deepbluembedded.com/stm32-adc-tutorial-complete-guide-with-examples/#introducing-stm32-adc
-* 
-* taskname_run 3ashan freertos owns the tasks fa we'll call these functions gwa freertos.c 
-* mesh katbeen el tasks henak fy freertos.c 3ashan el global variables kolaha teb2a hena 
-* w el tasks and stuff cpp 
+*
+* taskname_run 3ashan freertos owns the tasks fa we'll call these functions gwa freertos.c
+* mesh katbeen el tasks henak fy freertos.c 3ashan el global variables kolaha teb2a hena
+* w el tasks and stuff cpp
 */
+#define MAX_H 18 //18
+#define MAX_W 18 //18
+#define QUEUE_MAX (MAX_H * MAX_W)
+char curr_dir = 0;  // 0--> North, 1 --> East, 2 --> South, 3 --> West
+char curr_r = 8, curr_c = 1;
+
+int current_run;
+int previous_run;
+
+bool maze[MAX_H][MAX_W][5] = { 0 };  // represents the maze, first 4 bits represent the walls N E S W, the last bit represents the visiting status
+//leh mn3melsh byte/char maze[MAX_H][MAX_W] ?
+
+short dis[MAX_H][MAX_W] = {
+  { 16, 15, 14, 13, 12, 11, 10, 9, 8, 8, 9, 10, 11, 12, 13, 14, 15, 16 },
+  { 15, 14, 13, 12, 11, 10, 9, 8, 7, 7, 8, 9, 10, 11, 12, 13, 14, 15 },
+  { 14, 13, 12, 11, 10, 9, 8, 7, 6, 6, 7, 8, 9, 10, 11, 12, 13, 14 },
+  { 13, 12, 11, 10, 9, 8, 7, 6, 5, 5, 6, 7, 8, 9, 10, 11, 12, 13 },
+  { 12, 11, 10, 9, 8, 7, 6, 5, 4, 4, 5, 6, 7, 8, 9, 10, 11, 12 },
+  { 11, 10, 9, 8, 7, 6, 5, 4, 3, 3, 4, 5, 6, 7, 8, 9, 10, 11 },
+  { 10, 9, 8, 7, 6, 5, 4, 3, 2, 2, 3, 4, 5, 6, 7, 8, 9, 10 },
+  { 9, 8, 7, 6, 5, 4, 3, 2, 1, 1, 2, 3, 4, 5, 6, 7, 8, 9 },
+  { 8, 7, 6, 5, 4, 3, 2, 1, 0, 0, 1, 2, 3, 4, 5, 6, 7, 8 },
+  { 8, 7, 6, 5, 4, 3, 2, 1, 0, 0, 1, 2, 3, 4, 5, 6, 7, 8 },
+  { 9, 8, 7, 6, 5, 4, 3, 2, 1, 1, 2, 3, 4, 5, 6, 7, 8, 9 },
+  { 10, 9, 8, 7, 6, 5, 4, 3, 2, 2, 3, 4, 5, 6, 7, 8, 9, 10 },
+  { 11, 10, 9, 8, 7, 6, 5, 4, 3, 3, 4, 5, 6, 7, 8, 9, 10, 11 },
+  { 12, 11, 10, 9, 8, 7, 6, 5, 4, 4, 5, 6, 7, 8, 9, 10, 11, 12 },
+  { 13, 12, 11, 10, 9, 8, 7, 6, 5, 5, 6, 7, 8, 9, 10, 11, 12, 13 },
+  { 14, 13, 12, 11, 10, 9, 8, 7, 6, 6, 7, 8, 9, 10, 11, 12, 13, 14 },
+  { 15, 14, 13, 12, 11, 10, 9, 8, 7, 7, 8, 9, 10, 11, 12, 13, 14, 15 },
+  { 16, 15, 14, 13, 12, 11, 10, 9, 8, 8, 9, 10, 11, 12, 13, 14, 15, 16 }
+};
+queue r_q;
+queue c_q;
+// change r, c to move to: N, E, S, W
+signed char r_mov[4] = {-1, 0, 1, 0};
+signed char c_mov[4] = {0, 1, 0, -1};
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-float wrapAngle(float angle){
-  while(angle > 180) angle -= 360;
-  while(angle < -180) angle += 360;
+uint32_t millis(void)
+{
+    return __HAL_TIM_GET_COUNTER(&htim5);
+}
+inline float getLin()
+{
+  vec_3 lin = bno.linear_acceleration();
+  return lin.vec[2]; // Z axis
+}
+double map(double value, double fromLow, double fromHigh, double toLow, double toHigh) {
+    return (value - fromLow) * (toHigh - toLow) / (fromHigh - fromLow) + toLow;
+}
+float wrapAngle(float angle)
+{
+  while (angle > 180)
+    angle -= 360;
+  while (angle < -180)
+    angle += 360;
   return angle;
 }
-
-// ADC DMA Callback function
-extern "C" void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef *hadc)
+double angleDiff(double start, double goal)
 {
-  if (hadc->Instance == ADC1) {
-    // stop
-    HAL_TIM_Base_Stop(&htim2);
-    __HAL_TIM_SET_COUNTER(&htim2, 0);
-    __HAL_TIM_SetCompare(&htim2, 0, 1260);
-    HAL_TIM_GenerateEvent(&htim2, TIM_EVENTSOURCE_UPDATE);
-    __HAL_TIM_CLEAR_FLAG(&htim2, TIM_FLAG_UPDATE);
-
-    BaseType_t xHigherPriorityTaskWoken = pdFALSE;
-    vTaskNotifyGiveFromISR((TaskHandle_t) MotionTaskHandle, &xHigherPriorityTaskWoken);
-    portYIELD_FROM_ISR(xHigherPriorityTaskWoken); 
-  }
+  // goal  = (goal + 360) % 360.0;
+  double diff = fmod(goal - start, 360.0);
+  if (diff > 180)
+    diff -= 360;
+  if (diff < -180)
+    diff += 360;
+  return diff;
 }
-//printf->SWO
-int _write(int file, char *ptr, int len)
+double fixSpeed(double speed)
 {
-    for (int i = 0; i < len; i++)
-    {
-        ITM_SendChar((uint32_t)ptr[i]);
-    }
-    return len;
+  int maxx = 100;
+  speed = constrain(speed, -maxx, maxx);
+  if (fabs(speed) < 2)
+    return 0;
+  if (speed > 0)
+    return map(speed, 0, maxx, 45, maxx); // TODO:shoofy motors start moving at which speed
+  if (speed < 0)
+    return map(speed, -maxx, 0, -maxx, -45);
+  else
+    return 0;
 }
-
-void SWO_Init(void)//in order to use ITM_SendChar
+void set_motor_speeds(int16_t left_duty, int16_t right_duty)
 {
-    // Enable trace subsystem
-    CoreDebug->DEMCR |= CoreDebug_DEMCR_TRCENA_Msk;
-
-    // TPIU/ITM config — assumes core clock known, SWO baud rate e.g. 2000000
-    *((volatile unsigned int*)0xE0040010) = HAL_RCC_GetHCLKFreq() / 2000000 - 1; // TPIU prescaler for SWO baud
-
-    *((volatile unsigned int*)0xE00400F0) = 2; // Selected PIN Protocol Register: 2 = NRZ
-
-    // Enable ITM, port 0
-    ITM->LAR = 0xC5ACCE55;       // Unlock
-    ITM->TCR = ITM_TCR_ITMENA_Msk | ITM_TCR_SYNCENA_Msk;
-    ITM->TER = 1;                 // Enable stimulus port 0
-}
-
-void motor_speeds(int16_t left_duty,int16_t right_duty){
   left_duty *= 9.99;
   right_duty *= 9.99;
 
-  if(left_duty>999) left_duty = 999;
-  if(left_duty<-999) left_duty = -999;
-  if(right_duty>999) right_duty= 999;
-  if(right_duty<-999) right_duty = -999;
+  if (left_duty > 999)
+    left_duty = 999;
+  if (left_duty < -999)
+    left_duty = -999;
+  if (right_duty > 999)
+    right_duty = 999;
+  if (right_duty < -999)
+    right_duty = -999;
 
-  //TODO: define channels
-  //   if (right_duty >= 0)
-  // {
-  //     __HAL_TIM_SET_COMPARE(&htim1, MOTOR_RIGHT_FORWARD_CHANNEL, right_duty);
-  //     __HAL_TIM_SET_COMPARE(&htim1, MOTOR_RIGHT_BACKWARD_CHANNEL, 0);
-  // }
-  // else
-  // {
-  //     __HAL_TIM_SET_COMPARE(&htim1, MOTOR_RIGHT_FORWARD_CHANNEL, 0);
-  //     __HAL_TIM_SET_COMPARE(&htim1, MOTOR_RIGHT_BACKWARD_CHANNEL, -right_duty);
-  // }
+  // TODO: define channels
+  //    if (right_duty >= 0)
+  //  {
+  //      __HAL_TIM_SET_COMPARE(&htim1, MOTOR_RIGHT_FORWARD_CHANNEL, right_duty);
+  //      __HAL_TIM_SET_COMPARE(&htim1, MOTOR_RIGHT_BACKWARD_CHANNEL, 0);
+  //  }
+  //  else
+  //  {
+  //      __HAL_TIM_SET_COMPARE(&htim1, MOTOR_RIGHT_FORWARD_CHANNEL, 0);
+  //      __HAL_TIM_SET_COMPARE(&htim1, MOTOR_RIGHT_BACKWARD_CHANNEL, -right_duty);
+  //  }
 
   //   if (left_duty >= 0)
   // {
@@ -170,71 +178,615 @@ void motor_speeds(int16_t left_duty,int16_t right_duty){
   //     __HAL_TIM_SET_COMPARE(&htim1, MOTOR_RIGHT_BACKWARD_CHANNEL, -left_duty);
   // }
 }
+inline double calculateDistance(double x, double y)
+{
+  return sqrt(pow(x - position.x, 2) + pow(y - position.y, 2));
+}
+bool frontEmergency()
+{
+  if (ir_readings[0] > 1250)//TODO
+    return 1;
+  return 0;
+}
+
+bool wallFront()
+{
+  for (int i = 0; i < 10; i++)
+  {
+    if (ir_readings[0] > ir_thresh[0] or ir_readings[1] > ir_thresh[1])
+      return 1;
+  }
+  return 0;
+}
+bool wallRight()
+{
+  for (int i = 0; i < 10; i++)
+  {
+    if (ir_readings[3] > ir_thresh[3])
+      return 1;
+  }
+  return 0;
+}
+bool wallLeft()
+{
+  for (int i = 0; i < 10; i++)
+  {
+    if (ir_readings[2] > ir_thresh[2])
+      return 1;
+  }
+  return 0;
+}
+void turn(double angle)
+{
+  float currentAngle = position.theta;
+
+  double desiredAngle = currentAngle + angle;
+
+  double error = angleDiff(currentAngle, desiredAngle);
+  bool direction = (error > 0 ? true : false); // true -> turn right | false -> turn left
+  double errorPrev = error;
+  double totalerror = 0;
+  uint32_t lastPrint = millis();
+  uint32_t lastLoopTime = millis();
+  double minSpeed = 15; //------------------------------------------------------------------------TODO:need to tune this
+
+  double kp = 1.2; // TODO:Kp and Kd will be set with testing
+  double ki = 0.05;
+  double kd = -0.09;
+
+  const double integralMax = 30.0;
+  double speed = 100;
+
+  int counter = 0;
+
+  while (fabs(error) > 1 || fabs(gyro.x()) > 0.5)
+  {
+    vTaskDelay(1);
+    currentAngle = position.theta;
+
+    error = angleDiff(currentAngle, desiredAngle);
+
+    uint32_t now = millis();
+    double dt = (now - lastLoopTime) / 1000.0;
+    lastLoopTime = now;
+
+    double pTerm = kp * error;
+    double dTerm = kd * error / dt;
+
+    // anti-windUp
+    double iTermTentative = ki * error * dt;
+    bool saturating = (pTerm + iTermTentative + dTerm > 100) || (pTerm + iTermTentative + dTerm < -100);
+    if (!saturating)
+    {
+      totalerror += error * dt;
+    }
+    double iTerm = constrain(ki * totalerror, -integralMax, integralMax);
+
+    speed = pTerm + iTerm + dTerm;
+    speed = fixSpeed(speed);
+
+    // if (fabs(speed) > 1 && fabs(speed) < minSpeed) {
+    //   speed = (speed > 0 ? minSpeed : -minSpeed);
+    // }
+
+    direction = (speed > 0 ? true : false);
+    set_motor_speeds(speed, -speed);
+
+    errorPrev = error;
+    totalerror += error * dt;
+
+    if (fabs(gyro.x()) < 0.1)
+      counter++;
+    if (counter >= 40)
+      break;
+
+    if (lastPrint - millis() >= 100)
+    {
+      printf("turning %f, yaw=%f, error=%f, speed=%f, rate=%f,yaw offset=%f\n",
+             desiredAngle, position.theta, error, speed, gyro.x(), yawOffset);
+
+      lastPrint = millis();
+    }
+  }
+  printf("done turning\n");
+
+  set_motor_speeds(0, 0);
+  theoreticalHeading = currentAngle;
+  theoreticalHeading -= (theoreticalHeading > 360) ? 360 : 0;
+  theoreticalHeading += (theoreticalHeading < 0) ? 360 : 0;
+}
+bool moveF(double tiles = 16)            // if you want to move tile by tile use moveF(1), if you want continuous use moveF();
+{                                        // just need to add to make it stop using the irs
+  double desiredDistance = tiles * 19.7; // el tile el mafrood 18cm, bas we found it would move slightly less than what we wanted, fa we increased it
+
+  double startX = position.x, startY = position.y;
+  double startYaw = theoreticalHeading;
+
+  uint32_t startTime = millis();
+
+  double errorL = desiredDistance - calculateDistance(startX, startY);
+  double errorLPrev = errorL;
+
+  bool direction = (errorL >= 0 ? true : false); // true -> forward, false -> backward
+
+  // to keep moving staight
+
+  double errorA = angleDiff(position.theta, startYaw);
+  double errorAPrev = errorA;
+
+  // double errorTicks = 0;
+  double errorTicksPrev = 0;
+
+  uint32_t t = millis();
+
+  double Kpl = 3; // KD AND KP are changed with testing
+  double Kdl = -1;
+
+  double Kpa = -2.95; // changed
+  double Kda = 1.2;   // decreased
+
+  double KpTicks = 0.0;
+  double KdTicks = 0.0;
+  double kiTicks = 0.0;
+
+  double speedl;
+  double speeda;
+  double speedTicks = 0;
+  double speed;
+
+  char timeout_ctr = 0;
+
+  while ((fabs(errorL) > 0.2) && timeout_ctr < 50) // this 1 might change
+  {
+    vTaskDelay(1);
+    errorL = desiredDistance - calculateDistance(startX, startY);
+    errorA = angleDiff(position.theta, startYaw);
+
+    speedl = Kpl * errorL + Kdl * (errorL - errorLPrev) / (millis() - t);
+    speeda = Kpa * errorA + Kda * gyro.x();
+
+    direction = (speedl >= 0 ? true : false);
+
+    set_motor_speeds(fixSpeed(speedl-speeda), -fixSpeed(speedl-speeda));
+
+    errorLPrev = errorL;
+    errorAPrev = errorA;
+
+    t = millis();
+    if (fabs(getLin()) < 0.1)
+    {
+      timeout_ctr++;
+    }
+    if (frontEmergency())
+      break;
+  }
+
+  printf("Done moveF\n");
+  set_motor_speeds(0,0);
+  if (timeout_ctr >= 50)
+    return 0;
+  if (errorL > 10)
+    return 0;
+  return 1;
+}
+// ADC DMA Callback function
+extern "C" void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef *hadc)
+{
+  if (hadc->Instance == ADC1)
+  {
+    // stop
+    HAL_TIM_Base_Stop(&htim2);
+    __HAL_TIM_SET_COUNTER(&htim2, 0);
+    __HAL_TIM_SetCompare(&htim2, 0, 1260);
+    HAL_TIM_GenerateEvent(&htim2, TIM_EVENTSOURCE_UPDATE);
+    __HAL_TIM_CLEAR_FLAG(&htim2, TIM_FLAG_UPDATE);
+
+    BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+    vTaskNotifyGiveFromISR((TaskHandle_t)MotionTaskHandle, &xHigherPriorityTaskWoken);
+    portYIELD_FROM_ISR(xHigherPriorityTaskWoken);
+  }
+}
+// printf->SWO
+int _write(int file, char *ptr, int len)
+{
+  for (int i = 0; i < len; i++)
+  {
+    ITM_SendChar((uint32_t)ptr[i]);
+  }
+  return len;
+}
+
+void SWO_Init(void) // in order to use ITM_SendChar
+{
+  // Enable trace subsystem
+  CoreDebug->DEMCR |= CoreDebug_DEMCR_TRCENA_Msk;
+
+  // TPIU/ITM config — assumes core clock known, SWO baud rate e.g. 2000000
+  *((volatile unsigned int *)0xE0040010) = HAL_RCC_GetHCLKFreq() / 2000000 - 1; // TPIU prescaler for SWO baud
+
+  *((volatile unsigned int *)0xE00400F0) = 2; // Selected PIN Protocol Register: 2 = NRZ
+
+  // Enable ITM, port 0
+  ITM->LAR = 0xC5ACCE55; // Unlock
+  ITM->TCR = ITM_TCR_ITMENA_Msk | ITM_TCR_SYNCENA_Msk;
+  ITM->TER = 1; // Enable stimulus port 0
+}
+// queue implementation
+void initialise(queue &q, short size) {
+  q.head = 0;
+  q.tail = 0;
+  q.size = size;
+  q.counter = 0;
+}
+bool isfull(queue &q) {
+  if (q.counter == q.size)
+    return (1);
+  else
+    return (0);
+}
+bool isempty(queue &q) {
+  if (q.counter == 0)
+    return (1);
+  else
+    return (0);
+}
+
+void enqueue(queue &q, char value) {
+  if (!isfull(q)) {
+    q.items[q.tail] = value;
+    q.tail = (q.tail + 1) % q.size;
+    q.counter++;
+  }
+}
+char dequeue(queue &q) {
+  if (!isempty(q)) {
+    char result;
+    result = q.items[q.head];
+    q.head = (q.head + 1) % q.size;
+    q.counter--;
+    return result;
+  }
+  else return 0; //not sure law dah momken yebawaz logic el code bas it throws an error without it (reaches end of non-void function)
+}
+
+bool isValid(char r, char c)
+{
+  return ((r >= 0) && (r < MAX_H)) && ((c >= 0) && (c < MAX_W));
+}
+
+bool isAccessible(char r, char c, int dir)
+{
+  return !(maze[r][c][dir] || maze[r + r_mov[dir]][c + c_mov[dir]][(dir + 2) % 4]);
+}
+
+void flood(bool goal = 1)
+{ // make goal = 0 to change the goal to the start
+  printf("starting flood\n");
+  for (char i = 0; i < MAX_W; i++)
+  { // initialize all cells with -1
+    for (char j = 0; j < MAX_H; j++)
+    {
+      dis[i][j] = -1;
+    }
+  }
+
+  if (goal)
+  {
+    for (char x = MAX_W / 2 - 1; x < MAX_W / 2 + 1; x++)
+    { // change middle cells with 0
+      for (char w = MAX_H / 2 - 1; w < MAX_H / 2 + 1; w++)
+      {
+        dis[x][w] = 0;
+        enqueue(r_q, x);
+        enqueue(c_q, w);
+      }
+    }
+  }
+  else
+  {
+    dis[16][1] = 0;
+    enqueue(r_q, 16);
+    enqueue(c_q, 1);
+  }
+
+  while (!isempty(c_q) && !isempty(r_q))
+  {
+    char r = dequeue(r_q);
+    char col = dequeue(c_q);
+    printf("flooding from %d %d",(int)r, (int)col);
+    for (int i = 0; i < 4; i++)
+    {
+      printf("%d\n ", maze[r][col][i]);
+    }
+
+    for (int i = 0; i < 4; i++)
+    {
+      printf("%d %d %d\n", isValid(r + r_mov[i], col + c_mov[i]),isAccessible(r, col, i),dis[r + r_mov[i]][col + c_mov[i]]);
+     
+      if (isValid(r + r_mov[i], col + c_mov[i]) && isAccessible(r, col, i) && dis[r + r_mov[i]][col + c_mov[i]] == -1)
+      {
+        printf("enqueuing %d %d\n", (int)(r + r_mov[i]), (int)(col + c_mov[i]));
+        dis[r + r_mov[i]][col + c_mov[i]] = dis[r][col] + 1;
+        enqueue(r_q, r + r_mov[i]);
+        enqueue(c_q, col + c_mov[i]);
+      }
+    }
+  }
+}
+
+bool moveTo(char r, char c)
+{
+  // get where I want to move relative to abolute direction (y3ny lw el robot bases north) ana lesa m2alef el term dah
+  short dir;
+  if (r < curr_r)
+    dir = 0;
+  if (r > curr_r)
+    dir = 2;
+  if (c < curr_c)
+    dir = 3;
+  if (c > curr_c)
+    dir = 1;
+  // compare the movement direction to the current directoin to know how should I turn
+  if (dir - curr_dir == -1 || dir - curr_dir == 3) // turn left
+  {
+    printf("turning left\n");
+    turn(-90); // turnLeft();
+    vTaskDelay(pdMS_TO_TICKS(100));
+    // moveF(1);       //moveForward();
+    curr_dir += 3; // b3mel +3 msh -1 because el negative numbers don't work/work differently fel mod//
+    curr_dir %= 4;
+    printf("moving forward\n");
+    if (!moveF(1))
+      return 0;
+  }
+
+  else if (dir - curr_dir == 1 || dir - curr_dir == -3) // turn right
+  {
+    printf("turning right\n");
+    turn(90); // turnRight();
+    vTaskDelay(pdMS_TO_TICKS(100));
+    curr_dir++;
+    curr_dir %= 4;
+    printf("moving forward\n");
+    if (!moveF(1))
+      return 0; // moveForward(); //this function returns 0 if it was unable to move,so we leave the func, 3shan man8ayarsh el curr c wel curr r
+  }
+  else if (dir == curr_dir) // move forward
+  {
+    printf("moving forward\n");
+    if (!moveF(1))
+      return 0; // moveForward();
+  }
+  else // turn 180
+  {
+    // turnRight();
+    printf("turning 180\n");
+    turn(180); // turnRight();
+    vTaskDelay(pdMS_TO_TICKS(100));
+    curr_dir += 2;
+    curr_dir %= 4;
+    printf("moving forward\n");
+    if (!moveF(1))
+      return 0; // moveForward();
+  }
+
+  curr_dir %= 4;
+  curr_c = c;
+  curr_r = r;
+  return 1;
+}
+bool motionSuccessful = 0;
+int flooded = 0;
+void exploreToCenter()
+{
+  motionSuccessful = 1;
+  flooded = 0;
+  while (!(((curr_r == MAX_H / 2 - 1) || (curr_r == MAX_H / 2)) && ((curr_c == MAX_W / 2 - 1) || (curr_c == MAX_W / 2))))
+  {
+    vTaskDelay(1);
+    // while (!(((curr_r == 12) || (curr_r == 13)) && ((curr_c == 4) || (curr_c == 5))) && !menu ) {
+    // while(!(curr_r == 14 && curr_c == 3) && !menu){
+    printf("Exploring to center %c %c %c\n", curr_c, curr_r, curr_dir);
+
+    if (!maze[curr_r][curr_c][4] || !motionSuccessful)
+    {
+      // motionSuccessful = 1;
+      bool walls[4];
+      walls[0] = wallFront();
+      walls[1] = wallRight();
+      walls[3] = wallLeft();
+      if (curr_r == 16 && curr_c == 1 && curr_dir == 0)
+        walls[2] = 1;
+      else
+        walls[2] = 0;
+      printf("done reading the walls\n");
+      char d = curr_dir, w = 0;
+      do
+      {
+        if (!(w == 2 && walls[w] == 0))
+        {
+          maze[curr_r][curr_c][d] = walls[w];
+          maze[curr_r + r_mov[d]][curr_c + c_mov[d]][(d + 2) % 4] = walls[w]; // set the wall for the neighbouring cell too
+        }
+        d = (d + 1) % 4;
+        w++;
+      } while (d != curr_dir);
+    }
+    maze[curr_r][curr_c][4] = 1;
+    char next_r = curr_r, next_c = curr_c;
+
+    for (char i = 0; i < 4; i++)
+    {
+      if (isValid(curr_r + r_mov[i], curr_c + c_mov[i]) && isAccessible(curr_r, curr_c, i) && dis[curr_r + r_mov[i]][curr_c + c_mov[i]] < dis[next_r][next_c])
+      {
+        next_r = curr_r + r_mov[i];
+        next_c = curr_c + c_mov[i];
+      }
+    }
+
+    if ((next_r == curr_r) && (next_c == curr_c))
+    {                                 // you re-flood when you can't find a place to go
+      printf("next == curr flood\n"); // fa if you re-flood more than once, then the ir readings are most probablly wrong, fa sent mostionSuccessful to 0 to retake them
+      flood();
+      printf("done the next == curr flood\n");
+      flooded++;
+      if (flooded > 1)
+      {
+        motionSuccessful = 0;
+        flooded = 0;
+      }
+    }
+    else
+    {
+      flooded = 0;
+      printf("Start moving\n");
+      motionSuccessful = moveTo(next_r, next_c); // if failed, i want it to retake the ir readings
+      printf("done moving\n");
+    }
+  }
+
+  return;
+}
+void exploreToStart()
+{
+  motionSuccessful = 1;
+  flooded = 0;
+  while (!(curr_c == 1 && curr_r == 16) && !menu)
+  {
+    vTaskDelay(1);
+    printf("Exploring to start %c %c %c\n", curr_c, curr_r, curr_dir);
+
+    if (!maze[curr_r][curr_c][4] || !motionSuccessful)
+    {
+      bool walls[4];
+      walls[0] = wallFront();
+      walls[1] = wallRight();
+      walls[3] = wallLeft();
+      if (curr_r == 16 && curr_c == 1 && curr_dir == 0)
+        walls[2] = 1;
+      else
+        walls[2] = 0;
+      printf("done reading the walls");
+
+      char d = curr_dir, w = 0;
+      do
+      {
+        if (!(w == 2 && walls[w] == 0))
+        {
+          maze[curr_r][curr_c][d] = walls[w];
+          maze[curr_r + r_mov[d]][curr_c + c_mov[d]][(d + 2) % 4] = walls[w];
+        }
+        d = (d + 1) % 4;
+        w++;
+      } while (d != curr_dir);
+    }
+    maze[curr_r][curr_c][4] = 1;
+
+    char next_r = curr_r, next_c = curr_c;
+
+    for (char i = 0; i < 4; i++)
+    {
+      if (isValid(curr_r + r_mov[i], curr_c + c_mov[i]) && isAccessible(curr_r, curr_c, i) && dis[curr_r + r_mov[i]][curr_c + c_mov[i]] < dis[next_r][next_c])
+      {
+        next_r = curr_r + r_mov[i];
+        next_c = curr_c + c_mov[i];
+      }
+    }
+
+    if ((next_r == curr_r) && (next_c == curr_c))
+    {
+      printf("next == curr flood");
+      flood(0);
+      printf("done the next == curr flood");
+      flooded++;
+      if (flooded > 1)
+      {
+        motionSuccessful = 0;
+        flooded = 0;
+      }
+    }
+    else
+    {
+      flooded = 0;
+      printf("starting motion");
+      motionSuccessful = moveTo(next_r, next_c);
+      printf("done motion");
+    }
+  }
+  return;
+}
+
 ////////////////////////////////////////////////TASKS////////////////////////////////////////////////////
 void StartDefaultTask_run(void *arg)
 {
-  for(;;)
+  for (;;)
   {
-
   }
-
 }
 
 void bnoTask_run(void *arg)
 {
   TickType_t last = xTaskGetTickCount();
-  imu bno(&hi2c2,0x29);//TODO: check address with physical connection
   bno.init();
+  double prevRawYaw=0;
+  double yawJumpThresh;//TODO
   for (;;)
   {
     vTaskDelayUntil(&last, pdMS_TO_TICKS(10));
     vec_3 v = bno.euler();
     vec_3 u = bno.gyro();
-    taskENTER_CRITICAL();
+    double rawYaw   = v.x();                    
+
+    if (fabs(angleDiff(prevRawYaw,rawYaw)) > yawJumpThresh) {
+      yawOffset += angleDiff(rawYaw, prevRawYaw); 
+      printf("-------------------------------------BNO jump detected, discrepancy=%f, new offset=%f", angleDiff(prevRawYaw,rawYaw), yawOffset);
+    }
+    prevRawYaw = rawYaw;
     euler = v;
+    euler.vec[0] += yawOffset;
     gyro = u;
-    taskEXIT_CRITICAL();
   }
 }
 
 void motionTask_run(void *arg)
 {
+  // TODO: this will only update ir_readings and the encoder position
+  //  so we wont need the getPosition() function from pharos
+  //  momken yeb2a feeh wa2t negarab iir?
   TickType_t last = xTaskGetTickCount();
 
   // iir filter
-  ButterworthIIR ir_iir[6];
-  for(int i=0;i<6;i++) ir_iir[i].init(1,200.0f); //TODO:tune
+  // ButterworthIIR ir_iir[6];
+  // for (int i = 0; i < 6; i++)
+  //   ir_iir[i].init(1, 200.0f); // TODO:tune
   // write position
   const float mm_per_tick = (float)M_PI * WHEEL_DIAMETER / ENCODER_CPR; // meter of travel per encoder tick
-  ButterworthIIR velL;
-  ButterworthIIR velR;
-  double dt = 0.005; 
-  velL.init(1,200.0f );     //TODO: cutoff freq, sample rate 5ms
-  velR.init(1,200.0f );
-  velL.reset();
-  velR.reset();
+  // ButterworthIIR velL;
+  // ButterworthIIR velR;
+  double dt = 0.005;
+  // velL.init(1, 200.0f); // TODO: cutoff freq, sample rate 5ms
+  // velR.init(1, 200.0f);
+  // velL.reset();
+  // velR.reset();
 
   EncoderCount_t countL = (EncoderCount_t)__HAL_TIM_GET_COUNTER(&ENCODER_LEFT_TIM);
   EncoderCount_t countR = (EncoderCount_t)__HAL_TIM_GET_COUNTER(&ENCODER_RIGHT_TIM);
   EncoderCount_t lastCountL = 0;
   EncoderCount_t lastCountR = 0;
-  MotionType lastMotionTypeMotion = STOP;
 
   for (;;)
   {
     ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
     ////////////////////////////IRS//////////////////////
-    taskENTER_CRITICAL();
-    for(int i=0;i<6;i+=2){
-      ir_readings[i] = adc_dma_buffer[i/2] & 0xFFFF;
-      ir_readings[i+1] = (adc_dma_buffer[i/2] >> 16) & 0xFFFF;
+    for (int i = 0; i < 6; i += 2)
+    {
+      ir_readings[i] = adc_dma_buffer[i / 2] & 0xFFFF;
+      ir_readings[i + 1] = (adc_dma_buffer[i / 2] >> 16) & 0xFFFF;
 
-      //iir filter
-      ir_readings[i] = ir_iir[i].filter(ir_readings[i]);
-      ir_readings[i+1] = ir_iir[i+1].filter(ir_readings[i+1]);
+      // iir filter
+      // ir_readings[i] = ir_iir[i].filter(ir_readings[i]);
+      // ir_readings[i + 1] = ir_iir[i + 1].filter(ir_readings[i + 1]);
     }
-    taskEXIT_CRITICAL();
-
 
     ///////////////////////ENCODERS/////////////////////
     // overflow logic for 16bit timer tim3
@@ -247,211 +799,69 @@ void motionTask_run(void *arg)
 
     lastCountL = countL;
     lastCountR = raw_R;
-    
 
-    // --- counts -> distance (m) -> raw velocity (m/s) ---
-    float rawVelL = (deltaL * mm_per_tick) / ENCODER_TASK_DT_S;
-    float rawVelR = (deltaR * mm_per_tick) / ENCODER_TASK_DT_S;
-    //////?????
-    float velLfiltered = velL.filter(rawVelL);
-    float velRfiltered = velR.filter(rawVelR);
-    float v = (velLfiltered + velRfiltered) * 0.5f;       // m/s, forward speed
-    float w = (velRfiltered - velLfiltered) / WHEEL_BASE; // rad/s, positive = turning left
-    float dTheta = w * ENCODER_TASK_DT_S;
     // TODO: et2akedy men dool
     float distance_center = ((deltaL * mm_per_tick) + (deltaR * mm_per_tick)) / 2.0f;
 
-    /*straight line: PD Controller + IR centering + longitudinal correction with diagonal IRs
-      turns: Pure pursuit only, corrected using gyro. there is no IR correction in turns
-
-      error generated from purepursuit is corrected by the IRs later
-      the error should be negligible for one turn
-    */
-  
-    if(motionType != lastMotionTypeMotion){
-      //do i reset these? ana mayla le both reset or not reset so idk
-      leftCtrl.reset();
-      rightCtrl.reset();
-      lastMotionTypeMotion = motionType;
-    }
-    taskENTER_CRITICAL();
-    wheelVelocity wheel_speed = wheel_ref;
-    taskEXIT_CRITICAL();
-
-    double left_cmd,right_cmd;
-    if(motionType == STOP)
-    {
-      left_cmd = 0;
-      right_cmd = 0;
-    }
-    else 
-    {
-      left_cmd = leftCtrl.compute(wheel_speed.left,velLfiltered,dt);
-      right_cmd = rightCtrl.compute(wheel_speed.right,velRfiltered,dt);
-    }
-    
     // update global
     // 2 critical blocks 3ashan mesh taba3 ba3d w law 3ayez ye3mel interrupt mabenhom no problem
-    taskENTER_CRITICAL();
-    position.theta = euler.y(); // wont calculate angle from encoders
     position.x += distance_center * cos(position.theta);
     position.y += distance_center * sin(position.theta);
-    taskEXIT_CRITICAL();
-
-    taskENTER_CRITICAL();
-    robot_velocity.omega = w;
-    robot_velocity.v = v;
-    robot_velocity.vL = velLfiltered;
-    robot_velocity.vR = velRfiltered;
-    taskEXIT_CRITICAL();
-     // target v and motion type are written by alogo task and read inside controller&motion tasks f kda b acess el motiontype w target v atomatically
-    
-    motor_speeds(left_cmd,right_cmd);
   }
 }
 
-
 void controlTask_run(void *arg)
 {
+  // TODO: add algorithm and control stuff from pharos here. maybe also driving the motors? badal ma yeb2a global ya3ny w task tany yedrive them
   TickType_t last = xTaskGetTickCount();
-  double dt = 0.005; 
-  
-  PDController headingHoldPD(0,0,-100,100);//TODO:tune kp,kd
-  PDController lateralPD(0,0,-100,100); //TODO:tune kp,kd
-  float target_heading; // read only the moment we lose wall reference
-  float lateral_correction = 0.0f;
-  bool have_wall_ref_last_tick = true;
-  MotionType lastMotionTypeCtrl = STOP; 
-
-  purePursuit.reset();
+  double dt = 0.005;
 
   for (;;)
   {
     vTaskDelayUntil(&last, pdMS_TO_TICKS(5));
-    
-    taskENTER_CRITICAL();
-    Pose current_pose = position;
-    double v_measured = robot_velocity.v;
-    double omega_measured = robot_velocity.omega;
-    double left_distance = ir_distance[2], right_distance = ir_distance[3];
-    double front_distance = (ir_distance[0] + ir_distance[1]) * 0.5;
-    MotionType current_motion = motionType;
-    double current_target_v = target_v;
-    std::vector<Point> path_copy = current_path;
-    bool wall_front = walls[0];
-    bool wall_left = walls[1];
-    bool wall_right = walls[2];
-    taskEXIT_CRITICAL();
 
-    if(current_motion != lastMotionTypeCtrl){
-      headingHoldPD.reset();
-      lateralPD.reset();
-      purePursuit.reset();    
-      lastMotionTypeCtrl = current_motion;
-      //regenerate points for purepursuit 
-    }
-   // emergency stop if front wall detected & 🛺 lsa mkml staright
-    if (current_motion == STRAIGHT && (wall_front || front_distance < 0.02f ))  // TODO: tune threshold 
-    {
-      taskENTER_CRITICAL();
-      wheel_ref.left = 0.0;
-      wheel_ref.right = 0.0;
-      taskEXIT_CRITICAL();
-
-      MotionStatus_t status = {false}; // done
-      xQueueSend(motionStatusQueue, &status, 0);
-      continue; // skip the rest of the loop
-    }
-    if (current_motion == STRAIGHT)
-    {
-      //TODO: wrap reading the walls in CRITICAL section
-      double base_v = current_target_v;
-      float lateral_error = 0.0f;
-      if (walls[1] && walls[2]){ // 2 side walls
-        lateral_error = left_distance - right_distance;
-        have_wall_ref_last_tick = true;
-        lateral_correction = lateralPD.compute(0.0f,lateral_error,dt);
-      }
-      else if (walls[1]) {// only left wall
-        lateral_error = left_distance - EXPECTED_SIDE_DIST_TO_WALL;
-        have_wall_ref_last_tick = true;
-        lateral_correction = lateralPD.compute(0.0f,lateral_error,dt);
-      }
-      else if (walls[2]){ // only right wall
-        lateral_error = EXPECTED_SIDE_DIST_TO_WALL - right_distance;
-        have_wall_ref_last_tick = true;
-        lateral_correction = lateralPD.compute(0.0f,lateral_error,dt);
-      }
-
-      else{ // no side walls then hold current heading //dont know law dah momken ye7sal aslan bas better safe
-        if(have_wall_ref_last_tick){
-          target_heading = euler.y();
-          have_wall_ref_last_tick = false;
-        }
-        float heading_error = wrapAngle(target_heading - euler.y());
-        lateral_correction = headingHoldPD.compute(0.0f,-heading_error,dt);
-      }
-      taskENTER_CRITICAL();
-      wheel_ref.left = base_v - lateral_correction;
-      wheel_ref.right = base_v + lateral_correction;
-      taskEXIT_CRITICAL();
-    }
-    else if (current_motion == TURN)
-    {
-       wheelVelocity wheel_speed = purePursuit.computeControl(current_pose, v_measured, omega_measured, current_target_v, path_copy, dt);
-          taskENTER_CRITICAL();
-           wheel_ref = wheel_speed;
-          taskEXIT_CRITICAL();
-
-         if (!path_copy.empty()) {
-        const Point& goal = path_copy.back();
-        double dist_to_goal = std::hypot(goal.x - current_pose.x, goal.y - current_pose.y);
-        
-        
-      if (dist_to_goal < 0.01) { // threshold to consider the turn complete
-        MotionStatus_t status = {false}; // done
-        xQueueSend(motionStatusQueue, &status,0 );
-      }
-    }}
-    else  if (current_motion == STOP){ 
-    {    // TODO: need to make a case for STOP 
-      taskENTER_CRITICAL();
-      wheel_ref.left = 0;
-      wheel_ref.right = 0;
-      taskEXIT_CRITICAL();
-      
-  
+    flood();;
+      // ir_readings[i + 1] = ir_iir[i + 1].filter(ir_readings[i + 1]);
+    printf("done flood \n");
+    previous_run = current_run;
+    exploreToCenter();
+    printf("done exploretocenter\n");
+    current_run = dis[16][1];
+    // if (current_run != 0 && current_run == previous_run) break;
+    flood(0);
+    printf("done flood to begin\n");
+    exploreToStart();
+    printf("done exploretostart\n");
   }
-}}}
+}
 
 void algorithmTask_run(void *arg)
 {
+  // dont need this
   for (;;)
   {
-    
   }
 }
 
 void HMIConfigTask_run(void *arg)
 {
-  for(;;)
+  for (;;)
   {
-
   }
 }
 
-void loggerTask_run(void * arg)
+void loggerTask_run(void *arg)
 {
-  for(;;)
+  for (;;)
   {
-    
   }
 }
 //////////////////////////////////////////////////END TASKS//////////////////////////////////////////////
-void app_main() {
+void app_main()
+{
   // Write your C++ application code here
   // This acts as your new int main()
-  while(1) {
-
+  while (1)
+  {
   }
 }
