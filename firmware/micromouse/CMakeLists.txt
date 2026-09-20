@@ -80,3 +80,4 @@ target_link_libraries(${CMAKE_PROJECT_NAME}
 target_link_options(${PROJECT_NAME} PRIVATE
         -u _printf_float
 )
+target_compile_options(micromouse PRIVATE -fpermissive)
