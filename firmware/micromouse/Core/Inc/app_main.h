@@ -25,6 +25,20 @@ extern "C" {
 #define MOTOR_DIR_RIGHT_Pin 1       // TODO
 #define MOTOR_PWM_MAX_CCR 1         // TODO
 
+#define BTN_STARTSTOP_GPIO_Port GPIOB
+#define BTN_STARTSTOP_Pin GPIO_PIN_14
+#define BTN_IRCAL_GPIO_PORT GPIOB
+#define BTN_IRCAL_PIN GPIO_PIN_13
+#define BTN_BNOCAL_GPIO_PORT GPIOB
+#define BTN_BNOCAL_PIN GPIO_PIN_12
+
+#define EEPROM_MAGIC 0x42
+#define EEPROM_ADDR_BNO_VALID     0    // 1 byte
+#define EEPROM_ADDR_BNO_OFFSETS   5    // 22 bytes -> 5-26
+
+#define EEPROM_ADDR_IR_VALID      1    // 1 byte
+#define EEPROM_ADDR_IR_CAL        30   // 48 bytes -> 30-77 (left a gap after BNO)
+
 extern osThreadId_t defaultTaskHandle;
 extern osThreadId_t AlgorithimTaskHandle;
 extern osThreadId_t ControlTaskHandle;
