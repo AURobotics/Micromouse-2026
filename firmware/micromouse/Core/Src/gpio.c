@@ -52,26 +52,52 @@ void MX_GPIO_Init(void)
   __HAL_RCC_GPIOD_CLK_ENABLE();
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOB, CYBLE_SLEEP_Pin|LED_3_Pin|LED_2_Pin|LED_1_Pin, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(GPIOB, CYBLE_SLEEP_Pin|BLE_TX_Pin, GPIO_PIN_RESET);
 
-  /*Configure GPIO pins : CYBLE_SLEEP_Pin LED_3_Pin LED_2_Pin LED_1_Pin */
-  GPIO_InitStruct.Pin = CYBLE_SLEEP_Pin|LED_3_Pin|LED_2_Pin|LED_1_Pin;
+  /*Configure GPIO pin Output Level */
+  HAL_GPIO_WritePin(LED_1_GPIO_Port, LED_1_Pin, GPIO_PIN_RESET);
+
+  /*Configure GPIO pin Output Level */
+  HAL_GPIO_WritePin(GPIOC, LED_2_Pin|GPIO_PIN_11, GPIO_PIN_RESET);
+
+  /*Configure GPIO pins : CYBLE_SLEEP_Pin BLE_TX_Pin */
+  GPIO_InitStruct.Pin = CYBLE_SLEEP_Pin|BLE_TX_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
 
-  /*Configure GPIO pins : BTN_3_Pin BTN_2_Pin BTN_1_Pin */
-  GPIO_InitStruct.Pin = BTN_3_Pin|BTN_2_Pin|BTN_1_Pin;
+  /*Configure GPIO pins : BTN_3_Pin BTN_1_Pin BTN_2_Pin */
+  GPIO_InitStruct.Pin = BTN_3_Pin|BTN_1_Pin|BTN_2_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING;
   GPIO_InitStruct.Pull = GPIO_PULLUP;
   HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
+
+  /*Configure GPIO pin : LED_1_Pin */
+  GPIO_InitStruct.Pin = LED_1_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(LED_1_GPIO_Port, &GPIO_InitStruct);
+
+  /*Configure GPIO pins : LED_2_Pin PC11 */
+  GPIO_InitStruct.Pin = LED_2_Pin|GPIO_PIN_11;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
 
   /*Configure GPIO pin : BNO_INT_Pin */
   GPIO_InitStruct.Pin = BNO_INT_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(BNO_INT_GPIO_Port, &GPIO_InitStruct);
+
+  /*Configure GPIO pin : BLE_RX_Pin */
+  GPIO_InitStruct.Pin = BLE_RX_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  HAL_GPIO_Init(BLE_RX_GPIO_Port, &GPIO_InitStruct);
 
 }
 
