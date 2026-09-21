@@ -159,33 +159,32 @@ extern "C" void app_rtos_init(void)
     motionCmdQueue = xQueueCreate(4, sizeof(MotionCommand_t));
 }
 
-void motors(TIM_HandleTypeDef *htim, uint32_t channel, GPIO_TypeDef *port,
-            uint16_t pin, double speed)
+void motors(TIM_HandleTypeDef *htim, uint32_t channel_in1, uint32_t channel_in2, double speed)
 {
-  if (speed > 100.f)
-    speed = 100.f;
-  if (speed < -100.f)
-    speed = -100.f;
+    if (speed > 100.0)
+        speed = 100.0;
+    if (speed < -100.0)
+        speed = -100.0;
 
-  double pwm = (fabs(speed) / 100.f) * MOTOR_PWM_MAX_CCR; // convert speed percentage to pwm duty cycle
-  if (pwm > MOTOR_PWM_MAX_CCR)
-    pwm = MOTOR_PWM_MAX_CCR;
+    double pwm = (fabs(speed) / 100.0) * MOTOR_PWM_MAX_CCR;
+    if (pwm > MOTOR_PWM_MAX_CCR)
+        pwm = MOTOR_PWM_MAX_CCR;
 
-  if (speed >= 0)
-  {
-    HAL_GPIO_WritePin(port, pin, GPIO_PIN_SET);
-    __HAL_TIM_SET_COMPARE(htim, channel, (uint32_t)pwm);
-  }
-  else
-  {
-    HAL_GPIO_WritePin(port, pin, GPIO_PIN_RESET);
-    __HAL_TIM_SET_COMPARE(htim, channel, (uint32_t)(-pwm));
-  }
+    if (speed >= 0)
+    {
+        __HAL_TIM_SET_COMPARE(htim, channel_in1, (uint32_t)pwm);
+        __HAL_TIM_SET_COMPARE(htim, channel_in2, 0);
+    }
+    else
+    {
+        __HAL_TIM_SET_COMPARE(htim, channel_in1, 0);
+        __HAL_TIM_SET_COMPARE(htim, channel_in2, (uint32_t)pwm);
+    }
 }
 void motor_speeds(float left_speed, float right_speed)
 {
-  motors(&MOTOR_LEFT_TIM, MOTOR_LEFT_CHANNEL, MOTOR_DIR_LEFT_GPIO_Port, MOTOR_DIR_LEFT_Pin, left_speed);
-  motors(&MOTOR_RIGHT_TIM, MOTOR_RIGHT_CHANNEL, MOTOR_DIR_RIGHT_GPIO_Port, MOTOR_DIR_RIGHT_Pin, right_speed);
+  motors(&MOTOR_LEFT_TIM, MOTOR_LEFT_FORWARD_CHANNEL, MOTOR_LEFT_BACKWARD_CHANNEL, left_speed);
+  motors(&MOTOR_RIGHT_TIM, MOTOR_RIGHT_FORWARD_CHANNEL, MOTOR_RIGHT_BACKWARD_CHANNEL, right_speed);
 }
 extern "C" void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef *hadc)
 {
@@ -714,6 +713,7 @@ void algorithmTask_run(void *arg)
   {
     if (xQueueReceive(motionStatusQueue, &status, portMAX_DELAY) == pdTRUE)
     {
+      printf("in algorithm task...\n");
     }
   }
 }

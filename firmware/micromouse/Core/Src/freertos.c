@@ -282,7 +282,8 @@ void StartDefaultTask(void *argument)
 void algorithimTask(void *argument)
 {
   /* USER CODE BEGIN algorithimTask */
-  algorithmTask_run(argument);
+  // algorithmTask_run(argument);
+  ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
   /* USER CODE END algorithimTask */
 }
 
@@ -296,7 +297,8 @@ void algorithimTask(void *argument)
 void controlTask(void *argument)
 {
   /* USER CODE BEGIN controlTask */
-  controlTask_run(argument);
+  // controlTask_run(argument);
+  ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
   /* USER CODE END controlTask */
 }
 
@@ -325,7 +327,8 @@ void motionTask(void *argument)
 void bnoTask(void *argument)
 {
   /* USER CODE BEGIN bnoTask */
-  bnoTask_run(argument);
+  // bnoTask_run(argument);
+  ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
   /* USER CODE END bnoTask */
 }
 
@@ -354,33 +357,7 @@ void HMIConfigTask(void *argument)
 void loggerTask(void *argument)
 {
   /* USER CODE BEGIN loggerTask */
-  LogMessage_t rxMsg;
-
-  /* Only the default active output (ST-Link) starts up; everything else is
-   * put to sleep/torn down so we don't have two UARTs driving in parallel. */
-  Logger_ActivateOutput(loggerActiveOutput);
-  for (LogOutput_t out = (LogOutput_t)0; out < LOG_OUTPUT_COUNT; out++)
-  {
-    if (out != loggerActiveOutput)
-    {
-      Logger_DeactivateOutput(out);
-    }
-  }
-
-  /* Infinite loop */
-  for (;;)
-  {
-    /* Block here until exactly one message is available - the task uses
-     * zero CPU while the queue is empty, it isn't polling. Each caller's
-     * own spacing was already enforced in Logger_Print() before this
-     * message was ever queued, so LoggerTask just prints as they arrive. */
-    if (osMessageQueueGet(LoggingQueueHandle, &rxMsg, NULL, osWaitForever) == osOK)
-    {
-      osMutexAcquire(LoggerConfigMutexHandle, osWaitForever);
-      Logger_TransmitMessage(loggerActiveOutput, &rxMsg);
-      osMutexRelease(LoggerConfigMutexHandle);
-    }
-  }
+  loggerTask_run(argument);
   /* USER CODE END loggerTask */
 }
 
