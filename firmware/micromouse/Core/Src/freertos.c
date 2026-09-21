@@ -25,17 +25,52 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-#include "app_main.h"
+#include "freertos.h"
+#include "usart.h"
+#include <stdarg.h>
+#include <stdio.h>
+#include <string.h>
 /* USER CODE END Includes */
 
-/* Private typedef -----------------------------------------------------------*/
 typedef StaticTask_t osStaticThreadDef_t;
 /* USER CODE BEGIN PTD */
+
+/* Maximum length of a single log message, storage for the "thing to be
+ * printed" that is queued from the calling task up to the LoggerTask. */
+#define LOG_MSG_MAX_LEN   64U
+
+/* One entry stored in LoggingQueueHandle. Kept as a plain fixed-size struct
+ * (no pointers) so producer tasks can safely queue-by-copy and immediately
+ * reuse their own stack buffer. */
+typedef struct
+{
+  char message[LOG_MSG_MAX_LEN];
+} LogMessage_t;
+
+/* One row of the "clipboard" that lets Logger_Print() rate-limit each
+ * calling task independently, at that task's own requested frequency. */
+typedef struct
+{
+  osThreadId_t taskId;          /* which task this row belongs to */
+  uint32_t     periodMs;        /* that task's own requested frequency */
+  uint32_t     nextAllowedTick; /* earliest tick this task is allowed to print again */
+} LoggerSource_t;
 
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
+
+#define LOGGER_QUEUE_LENGTH                16U      /* entries held in LoggingQueue */
+#define LOGGER_MAX_SOURCES                 8U       /* distinct tasks Logger_Print can track at once */
+#define LOGGER_UART_TX_TIMEOUT_MS           20U      /* HAL_UART_Transmit timeout */
+
+/* CYBLE_SLEEP_Pin drives the Bluetooth (Cypress BLE) module's sleep input.
+ * NOTE: polarity assumed active-high = sleep, active-low = awake based on
+ * the default GPIO_PIN_RESET init state in gpio.c. Verify against your
+ * module's datasheet and flip these two macros if it turns out inverted. */
+#define BLE_SLEEP_ASSERT()    HAL_GPIO_WritePin(CYBLE_SLEEP_GPIO_Port, CYBLE_SLEEP_Pin, GPIO_PIN_SET)
+#define BLE_SLEEP_RELEASE()   HAL_GPIO_WritePin(CYBLE_SLEEP_GPIO_Port, CYBLE_SLEEP_Pin, GPIO_PIN_RESET)
 
 /* USER CODE END PD */
 
@@ -46,6 +81,23 @@ typedef StaticTask_t osStaticThreadDef_t;
 
 /* Private variables ---------------------------------------------------------*/
 /* USER CODE BEGIN Variables */
+
+/* Guards loggerActiveOutput / the UART peripherals it maps to, so
+ * Logger_SetOutput() can't race with LoggerTask mid-transmit. */
+osMutexId_t LoggerConfigMutexHandle;
+
+/* Guards the loggerSources[] table below, since multiple producer tasks
+ * can call Logger_Print() concurrently. */
+osMutexId_t LoggerSourcesMutexHandle;
+
+static volatile LogOutput_t loggerActiveOutput  = LOG_OUTPUT_STLINK;
+static volatile uint32_t    loggerDroppedCount  = 0U;
+
+/* The "clipboard": one row per distinct task that has ever called
+ * Logger_Print(), so each task's own requested frequency is remembered
+ * and enforced independently of every other task's. */
+static LoggerSource_t loggerSources[LOGGER_MAX_SOURCES];
+static uint8_t         loggerSourceCount = 0U;
 
 /* USER CODE END Variables */
 /* Definitions for defaultTask */
@@ -121,6 +173,11 @@ const osMessageQueueAttr_t LoggingQueue_attributes = {
 /* Private function prototypes -----------------------------------------------*/
 /* USER CODE BEGIN FunctionPrototypes */
 
+static void Logger_ActivateOutput(LogOutput_t output);
+static void Logger_DeactivateOutput(LogOutput_t output);
+static void Logger_TransmitMessage(LogOutput_t output, const LogMessage_t *msg);
+static LoggerSource_t *Logger_FindOrCreateSource(osThreadId_t taskId, uint32_t period_ms);
+
 /* USER CODE END FunctionPrototypes */
 
 void StartDefaultTask(void *argument);
@@ -145,6 +202,8 @@ void MX_FREERTOS_Init(void) {
 
   /* USER CODE BEGIN RTOS_MUTEX */
   /* add mutexes, ... */
+  LoggerConfigMutexHandle = osMutexNew(NULL);
+  LoggerSourcesMutexHandle = osMutexNew(NULL);
   /* USER CODE END RTOS_MUTEX */
 
   /* USER CODE BEGIN RTOS_SEMAPHORES */
@@ -157,7 +216,11 @@ void MX_FREERTOS_Init(void) {
 
   /* Create the queue(s) */
   /* creation of LoggingQueue */
-  LoggingQueueHandle = osMessageQueueNew (16, sizeof(uint16_t), &LoggingQueue_attributes);
+  /* NOTE: element type/size changed from the CubeMX default (uint16_t) to
+   * LogMessage_t so it can carry formatted debug strings. If you regenerate
+   * this project from the .ioc file, update the Message Queue's "Data Type"
+   * in CubeMX (or re-apply this line) so it isn't reset to uint16_t. */
+  LoggingQueueHandle = osMessageQueueNew (LOGGER_QUEUE_LENGTH, sizeof(LogMessage_t), &LoggingQueue_attributes);
 
   /* USER CODE BEGIN RTOS_QUEUES */
   /* add queues, ... */
@@ -291,12 +354,262 @@ void HMIConfigTask(void *argument)
 void loggerTask(void *argument)
 {
   /* USER CODE BEGIN loggerTask */
-  loggerTask_run(argument);
+  LogMessage_t rxMsg;
+
+  /* Only the default active output (ST-Link) starts up; everything else is
+   * put to sleep/torn down so we don't have two UARTs driving in parallel. */
+  Logger_ActivateOutput(loggerActiveOutput);
+  for (LogOutput_t out = (LogOutput_t)0; out < LOG_OUTPUT_COUNT; out++)
+  {
+    if (out != loggerActiveOutput)
+    {
+      Logger_DeactivateOutput(out);
+    }
+  }
+
+  /* Infinite loop */
+  for (;;)
+  {
+    /* Block here until exactly one message is available - the task uses
+     * zero CPU while the queue is empty, it isn't polling. Each caller's
+     * own spacing was already enforced in Logger_Print() before this
+     * message was ever queued, so LoggerTask just prints as they arrive. */
+    if (osMessageQueueGet(LoggingQueueHandle, &rxMsg, NULL, osWaitForever) == osOK)
+    {
+      osMutexAcquire(LoggerConfigMutexHandle, osWaitForever);
+      Logger_TransmitMessage(loggerActiveOutput, &rxMsg);
+      osMutexRelease(LoggerConfigMutexHandle);
+    }
+  }
   /* USER CODE END loggerTask */
 }
 
 /* Private application code --------------------------------------------------*/
 /* USER CODE BEGIN Application */
 
-/* USER CODE END Application */
+/**
+  * @brief  Powers up / wakes the given output peripheral.
+  * @note   USB is stubbed out: this project has no USB_DEVICE middleware
+  *         yet (no CDC class configured in CubeMX). Add USB_OTG_FS +
+  *         USB_DEVICE(CDC) via CubeMX, generate MX_USB_DEVICE_Init(), then
+  *         call it here.
+  */
+static void Logger_ActivateOutput(LogOutput_t output)
+{
+  switch (output)
+  {
+    case LOG_OUTPUT_STLINK:
+      MX_USART2_UART_Init();
+      break;
 
+    case LOG_OUTPUT_BLUETOOTH:
+      MX_UART4_Init();
+      BLE_SLEEP_RELEASE();
+      break;
+
+    case LOG_OUTPUT_USB:
+      /* TODO: MX_USB_DEVICE_Init(); once USB CDC is added to the project */
+      break;
+
+    default:
+      break;
+  }
+}
+
+/**
+  * @brief  Puts the given output peripheral to sleep / tears it down so it
+  *         is not left driving its lines while another output is selected.
+  */
+static void Logger_DeactivateOutput(LogOutput_t output)
+{
+  switch (output)
+  {
+    case LOG_OUTPUT_STLINK:
+      HAL_UART_DeInit(&huart2);
+      break;
+
+    case LOG_OUTPUT_BLUETOOTH:
+      BLE_SLEEP_ASSERT();
+      HAL_UART_DeInit(&huart4);
+      break;
+
+    case LOG_OUTPUT_USB:
+      /* TODO: USB CDC not yet configured in this project. */
+      break;
+
+    default:
+      break;
+  }
+}
+
+/**
+  * @brief  Writes one already-formatted log entry out over the given output.
+  */
+static void Logger_TransmitMessage(LogOutput_t output, const LogMessage_t *msg)
+{
+  uint16_t len = (uint16_t)strnlen(msg->message, LOG_MSG_MAX_LEN);
+
+  if (len == 0U)
+  {
+    return;
+  }
+
+  switch (output)
+  {
+    case LOG_OUTPUT_STLINK:
+      HAL_UART_Transmit(&huart2, (uint8_t *)msg->message, len, LOGGER_UART_TX_TIMEOUT_MS);
+      break;
+
+    case LOG_OUTPUT_BLUETOOTH:
+      HAL_UART_Transmit(&huart4, (uint8_t *)msg->message, len, LOGGER_UART_TX_TIMEOUT_MS);
+      break;
+
+    case LOG_OUTPUT_USB:
+      /* TODO: CDC_Transmit_FS((uint8_t *)msg->message, len); once USB CDC exists */
+      break;
+
+    default:
+      break;
+  }
+}
+
+/**
+  * @brief  Selects which physical interface debug logs are printed over.
+  *         The two outputs not selected are put to sleep / torn down so
+  *         only one interface is ever active at a time.
+  * @param  output One of LOG_OUTPUT_USB / LOG_OUTPUT_STLINK / LOG_OUTPUT_BLUETOOTH.
+  */
+void Logger_SetOutput(LogOutput_t output)
+{
+  if (output >= LOG_OUTPUT_COUNT)
+  {
+    return;
+  }
+
+  osMutexAcquire(LoggerConfigMutexHandle, osWaitForever);
+
+  if (output != loggerActiveOutput)
+  {
+    Logger_DeactivateOutput(loggerActiveOutput);
+    Logger_ActivateOutput(output);
+    loggerActiveOutput = output;
+  }
+
+  osMutexRelease(LoggerConfigMutexHandle);
+}
+
+/**
+  * @brief  Finds this task's row in the source table, creating one on its
+  *         first-ever call. This is the "clipboard lookup": it's how
+  *         Logger_Print() tells different calling tasks apart.
+  * @retval Pointer to the task's row, or NULL if the table is full.
+  */
+static LoggerSource_t *Logger_FindOrCreateSource(osThreadId_t taskId, uint32_t period_ms)
+{
+  for (uint8_t i = 0U; i < loggerSourceCount; i++)
+  {
+    if (loggerSources[i].taskId == taskId)
+    {
+      return &loggerSources[i];
+    }
+  }
+
+  if (loggerSourceCount >= LOGGER_MAX_SOURCES)
+  {
+    return NULL;
+  }
+
+  loggerSources[loggerSourceCount].taskId          = taskId;
+  loggerSources[loggerSourceCount].periodMs        = period_ms;
+  loggerSources[loggerSourceCount].nextAllowedTick = osKernelGetTickCount(); /* allow immediately, first call */
+  loggerSourceCount++;
+
+  return &loggerSources[loggerSourceCount - 1U];
+}
+
+/**
+  * @brief  Queues one printf-style debug message for LoggerTask to print,
+  *         rate-limited to the CALLING TASK's own requested frequency.
+  *         Each task gets its own independent cooldown - Task A asking for
+  *         100ms and Task B asking for 200ms don't affect each other.
+  *         Non-blocking by design: a stalled/full logger must never hold up
+  *         a real-time task (Algorithm/Control/Motion) that calls this.
+  * @param  period_ms This calling task's own print frequency, in ms.
+  * @param  format printf-style format string, result truncated to LOG_MSG_MAX_LEN-1.
+  * @retval osOK on success, osErrorParameter on bad args, osErrorResource if
+  *         dropped (either too soon for this task's own frequency, or the
+  *         queue was full - see Logger_GetDroppedCount for the latter).
+  */
+osStatus_t Logger_Print(uint32_t period_ms, const char *format, ...)
+{
+  LogMessage_t msg;
+  va_list args;
+  osThreadId_t caller;
+  LoggerSource_t *src;
+  uint32_t now;
+  uint8_t allowed;
+  osStatus_t status;
+
+  if ((format == NULL) || (period_ms == 0U))
+  {
+    return osErrorParameter;
+  }
+
+  caller  = osThreadGetId();
+  now     = osKernelGetTickCount();
+  allowed = 0U;
+
+  osMutexAcquire(LoggerSourcesMutexHandle, osWaitForever);
+
+  src = Logger_FindOrCreateSource(caller, period_ms);
+  if (src == NULL)
+  {
+    /* Source table full (more than LOGGER_MAX_SOURCES distinct callers):
+     * fall back to always allowing this task through rather than
+     * silently losing it forever. Bump LOGGER_MAX_SOURCES if this
+     * happens often. */
+    allowed = 1U;
+  }
+  else
+  {
+    src->periodMs = period_ms; /* caller may have changed its own rate */
+
+    if (now >= src->nextAllowedTick)
+    {
+      allowed = 1U;
+      src->nextAllowedTick = now + period_ms;
+    }
+  }
+
+  osMutexRelease(LoggerSourcesMutexHandle);
+
+  if (allowed == 0U)
+  {
+    /* Too soon for THIS caller's own frequency - drop it, not an error,
+     * just this task's cooldown hasn't expired yet. */
+    return osErrorResource;
+  }
+
+  va_start(args, format);
+  vsnprintf(msg.message, LOG_MSG_MAX_LEN, format, args);
+  va_end(args);
+
+  status = osMessageQueuePut(LoggingQueueHandle, &msg, 0U, 0U);
+  if (status != osOK)
+  {
+    loggerDroppedCount++;
+  }
+
+  return status;
+}
+
+/**
+  * @brief  Number of log messages dropped because the queue was full,
+  *         i.e. producers are outrunning the configured print frequency.
+  */
+uint32_t Logger_GetDroppedCount(void)
+{
+  return loggerDroppedCount;
+}
+
+/* USER CODE END Application */
