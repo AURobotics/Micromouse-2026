@@ -12,14 +12,16 @@
 #include "iirFilter.h"
 #include "PDcontroller.h"
 #include "BNO055.h"
+#include "eeprom.h"
 
 #define constrain(amt, low, high) ((amt) < (low) ? (low) : ((amt) > (high) ? (high) : (amt)))
-struct queue {
-    char items[300];//MAX QUEUE SIZE 16*16=256
-    short head;
-    short tail;
-    short size=300;
-    short counter;
+struct queue
+{
+  char items[300]; // MAX QUEUE SIZE 16*16=256
+  short head;
+  short tail;
+  short size = 300;
+  short counter;
 };
 
 ////////////////////////////////////////////////GLOBAL VARIABLES////////////////////////////////////////////////////////////
@@ -41,11 +43,11 @@ uint16_t ir_sequence[9] = {
     0, 1260, 0, // Pulse 1: Only Channel 2 is ON
     0, 0, 1260, // Pulse 2: Only Channel 3 is ON
     1260, 0, 0  // Pulse 3: Only Channel 1 is ON
-  };
-  
+};
+
 bool walls[3] = {0};
-double ir_readings[6] = {0}; // left_front, right_front, left,right,left_diag, right_diag
-double ir_thresh[6] = {0, 0, 0, 0, 0, 0};
+double ir_readings[6] = {0};              // left_front, right_front, left,right,left_diag, right_diag
+double ir_thresh[6] = {1, 1, 1, 1, 1, 1}; // TODO
 double ir_distance[6] = {0};
 struct Pose position = {0, 0, 0};
 double yawOffset;
@@ -53,62 +55,65 @@ double theoreticalHeading = 0;
 imu bno(&hi2c2, 0x29); // TODO: check address with physical connection
 bool menu = false;
 /* TODO: Calibrate adc, check adc calibration modes...
-* useful links: https://deepbluembedded.com/stm32-adc-tutorial-complete-guide-with-examples/#introducing-stm32-adc
-*
-* taskname_run 3ashan freertos owns the tasks fa we'll call these functions gwa freertos.c
-* mesh katbeen el tasks henak fy freertos.c 3ashan el global variables kolaha teb2a hena
-* w el tasks and stuff cpp
-*/
-#define MAX_H 18 //18
-#define MAX_W 18 //18
+ * useful links: https://deepbluembedded.com/stm32-adc-tutorial-complete-guide-with-examples/#introducing-stm32-adc
+ *
+ * taskname_run 3ashan freertos owns the tasks fa we'll call these functions gwa freertos.c
+ * mesh katbeen el tasks henak fy freertos.c 3ashan el global variables kolaha teb2a hena
+ * w el tasks and stuff cpp
+ */
+#define MAX_H 18 // 18
+#define MAX_W 18 // 18
 #define QUEUE_MAX (MAX_H * MAX_W)
-char curr_dir = 0;  // 0--> North, 1 --> East, 2 --> South, 3 --> West
+char curr_dir = 0; // 0--> North, 1 --> East, 2 --> South, 3 --> West
 char curr_r = 8, curr_c = 1;
 
 int current_run;
 int previous_run;
 
-bool maze[MAX_H][MAX_W][5] = { 0 };  // represents the maze, first 4 bits represent the walls N E S W, the last bit represents the visiting status
-//leh mn3melsh byte/char maze[MAX_H][MAX_W] ?
+bool maze[MAX_H][MAX_W][5] = {0}; // represents the maze, first 4 bits represent the walls N E S W, the last bit represents the visiting status
+// leh mn3melsh byte/char maze[MAX_H][MAX_W] ?
 
 short dis[MAX_H][MAX_W] = {
-  { 16, 15, 14, 13, 12, 11, 10, 9, 8, 8, 9, 10, 11, 12, 13, 14, 15, 16 },
-  { 15, 14, 13, 12, 11, 10, 9, 8, 7, 7, 8, 9, 10, 11, 12, 13, 14, 15 },
-  { 14, 13, 12, 11, 10, 9, 8, 7, 6, 6, 7, 8, 9, 10, 11, 12, 13, 14 },
-  { 13, 12, 11, 10, 9, 8, 7, 6, 5, 5, 6, 7, 8, 9, 10, 11, 12, 13 },
-  { 12, 11, 10, 9, 8, 7, 6, 5, 4, 4, 5, 6, 7, 8, 9, 10, 11, 12 },
-  { 11, 10, 9, 8, 7, 6, 5, 4, 3, 3, 4, 5, 6, 7, 8, 9, 10, 11 },
-  { 10, 9, 8, 7, 6, 5, 4, 3, 2, 2, 3, 4, 5, 6, 7, 8, 9, 10 },
-  { 9, 8, 7, 6, 5, 4, 3, 2, 1, 1, 2, 3, 4, 5, 6, 7, 8, 9 },
-  { 8, 7, 6, 5, 4, 3, 2, 1, 0, 0, 1, 2, 3, 4, 5, 6, 7, 8 },
-  { 8, 7, 6, 5, 4, 3, 2, 1, 0, 0, 1, 2, 3, 4, 5, 6, 7, 8 },
-  { 9, 8, 7, 6, 5, 4, 3, 2, 1, 1, 2, 3, 4, 5, 6, 7, 8, 9 },
-  { 10, 9, 8, 7, 6, 5, 4, 3, 2, 2, 3, 4, 5, 6, 7, 8, 9, 10 },
-  { 11, 10, 9, 8, 7, 6, 5, 4, 3, 3, 4, 5, 6, 7, 8, 9, 10, 11 },
-  { 12, 11, 10, 9, 8, 7, 6, 5, 4, 4, 5, 6, 7, 8, 9, 10, 11, 12 },
-  { 13, 12, 11, 10, 9, 8, 7, 6, 5, 5, 6, 7, 8, 9, 10, 11, 12, 13 },
-  { 14, 13, 12, 11, 10, 9, 8, 7, 6, 6, 7, 8, 9, 10, 11, 12, 13, 14 },
-  { 15, 14, 13, 12, 11, 10, 9, 8, 7, 7, 8, 9, 10, 11, 12, 13, 14, 15 },
-  { 16, 15, 14, 13, 12, 11, 10, 9, 8, 8, 9, 10, 11, 12, 13, 14, 15, 16 }
-};
+    {16, 15, 14, 13, 12, 11, 10, 9, 8, 8, 9, 10, 11, 12, 13, 14, 15, 16},
+    {15, 14, 13, 12, 11, 10, 9, 8, 7, 7, 8, 9, 10, 11, 12, 13, 14, 15},
+    {14, 13, 12, 11, 10, 9, 8, 7, 6, 6, 7, 8, 9, 10, 11, 12, 13, 14},
+    {13, 12, 11, 10, 9, 8, 7, 6, 5, 5, 6, 7, 8, 9, 10, 11, 12, 13},
+    {12, 11, 10, 9, 8, 7, 6, 5, 4, 4, 5, 6, 7, 8, 9, 10, 11, 12},
+    {11, 10, 9, 8, 7, 6, 5, 4, 3, 3, 4, 5, 6, 7, 8, 9, 10, 11},
+    {10, 9, 8, 7, 6, 5, 4, 3, 2, 2, 3, 4, 5, 6, 7, 8, 9, 10},
+    {9, 8, 7, 6, 5, 4, 3, 2, 1, 1, 2, 3, 4, 5, 6, 7, 8, 9},
+    {8, 7, 6, 5, 4, 3, 2, 1, 0, 0, 1, 2, 3, 4, 5, 6, 7, 8},
+    {8, 7, 6, 5, 4, 3, 2, 1, 0, 0, 1, 2, 3, 4, 5, 6, 7, 8},
+    {9, 8, 7, 6, 5, 4, 3, 2, 1, 1, 2, 3, 4, 5, 6, 7, 8, 9},
+    {10, 9, 8, 7, 6, 5, 4, 3, 2, 2, 3, 4, 5, 6, 7, 8, 9, 10},
+    {11, 10, 9, 8, 7, 6, 5, 4, 3, 3, 4, 5, 6, 7, 8, 9, 10, 11},
+    {12, 11, 10, 9, 8, 7, 6, 5, 4, 4, 5, 6, 7, 8, 9, 10, 11, 12},
+    {13, 12, 11, 10, 9, 8, 7, 6, 5, 5, 6, 7, 8, 9, 10, 11, 12, 13},
+    {14, 13, 12, 11, 10, 9, 8, 7, 6, 6, 7, 8, 9, 10, 11, 12, 13, 14},
+    {15, 14, 13, 12, 11, 10, 9, 8, 7, 7, 8, 9, 10, 11, 12, 13, 14, 15},
+    {16, 15, 14, 13, 12, 11, 10, 9, 8, 8, 9, 10, 11, 12, 13, 14, 15, 16}};
 queue r_q;
 queue c_q;
 // change r, c to move to: N, E, S, W
 signed char r_mov[4] = {-1, 0, 1, 0};
 signed char c_mov[4] = {0, 1, 0, -1};
 
+bool calibrateIR = false;
+bool calibrateBNO = false;
+uint32_t lastIrCalTick = 0;
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 uint32_t millis(void)
 {
-    return __HAL_TIM_GET_COUNTER(&htim5);
+  return __HAL_TIM_GET_COUNTER(&htim5);
 }
 inline float getLin()
 {
   vec_3 lin = bno.linear_acceleration();
   return lin.vec[2]; // Z axis
 }
-double map(double value, double fromLow, double fromHigh, double toLow, double toHigh) {
-    return (value - fromLow) * (toHigh - toLow) / (fromHigh - fromLow) + toLow;
+double map(double value, double fromLow, double fromHigh, double toLow, double toHigh)
+{
+  return (value - fromLow) * (toHigh - toLow) / (fromHigh - fromLow) + toLow;
 }
 float wrapAngle(float angle)
 {
@@ -184,7 +189,7 @@ inline double calculateDistance(double x, double y)
 }
 bool frontEmergency()
 {
-  if (ir_readings[0] > 1250)//TODO
+  if (ir_readings[0] > 1250) // TODO
     return 1;
   return 0;
 }
@@ -347,7 +352,7 @@ bool moveF(double tiles = 16)            // if you want to move tile by tile use
 
     direction = (speedl >= 0 ? true : false);
 
-    set_motor_speeds(fixSpeed(speedl-speeda), -fixSpeed(speedl-speeda));
+    set_motor_speeds(fixSpeed(speedl - speeda), -fixSpeed(speedl - speeda));
 
     errorLPrev = errorL;
     errorAPrev = errorA;
@@ -362,7 +367,7 @@ bool moveF(double tiles = 16)            // if you want to move tile by tile use
   }
 
   printf("Done moveF\n");
-  set_motor_speeds(0,0);
+  set_motor_speeds(0, 0);
   if (timeout_ctr >= 50)
     return 0;
   if (errorL > 10)
@@ -381,9 +386,9 @@ extern "C" void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef *hadc)
     HAL_TIM_GenerateEvent(&htim2, TIM_EVENTSOURCE_UPDATE);
     __HAL_TIM_CLEAR_FLAG(&htim2, TIM_FLAG_UPDATE);
 
-    BaseType_t xHigherPriorityTaskWoken = pdFALSE;
-    vTaskNotifyGiveFromISR((TaskHandle_t)MotionTaskHandle, &xHigherPriorityTaskWoken);
-    portYIELD_FROM_ISR(xHigherPriorityTaskWoken);
+    // BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+    // vTaskNotifyGiveFromISR((TaskHandle_t)MotionTaskHandle, &xHigherPriorityTaskWoken);
+    // portYIELD_FROM_ISR(xHigherPriorityTaskWoken);
   }
 }
 // printf->SWO
@@ -412,41 +417,49 @@ void SWO_Init(void) // in order to use ITM_SendChar
   ITM->TER = 1; // Enable stimulus port 0
 }
 // queue implementation
-void initialise(queue &q, short size) {
+void initialise(queue &q, short size)
+{
   q.head = 0;
   q.tail = 0;
   q.size = size;
   q.counter = 0;
 }
-bool isfull(queue &q) {
+bool isfull(queue &q)
+{
   if (q.counter == q.size)
     return (1);
   else
     return (0);
 }
-bool isempty(queue &q) {
+bool isempty(queue &q)
+{
   if (q.counter == 0)
     return (1);
   else
     return (0);
 }
 
-void enqueue(queue &q, char value) {
-  if (!isfull(q)) {
+void enqueue(queue &q, char value)
+{
+  if (!isfull(q))
+  {
     q.items[q.tail] = value;
     q.tail = (q.tail + 1) % q.size;
     q.counter++;
   }
 }
-char dequeue(queue &q) {
-  if (!isempty(q)) {
+char dequeue(queue &q)
+{
+  if (!isempty(q))
+  {
     char result;
     result = q.items[q.head];
     q.head = (q.head + 1) % q.size;
     q.counter--;
     return result;
   }
-  else return 0; //not sure law dah momken yebawaz logic el code bas it throws an error without it (reaches end of non-void function)
+  else
+    return 0; // not sure law dah momken yebawaz logic el code bas it throws an error without it (reaches end of non-void function)
 }
 
 bool isValid(char r, char c)
@@ -493,7 +506,7 @@ void flood(bool goal = 1)
   {
     char r = dequeue(r_q);
     char col = dequeue(c_q);
-    printf("flooding from %d %d",(int)r, (int)col);
+    printf("flooding from %d %d", (int)r, (int)col);
     for (int i = 0; i < 4; i++)
     {
       printf("%d\n ", maze[r][col][i]);
@@ -501,8 +514,8 @@ void flood(bool goal = 1)
 
     for (int i = 0; i < 4; i++)
     {
-      printf("%d %d %d\n", isValid(r + r_mov[i], col + c_mov[i]),isAccessible(r, col, i),dis[r + r_mov[i]][col + c_mov[i]]);
-     
+      printf("%d %d %d\n", isValid(r + r_mov[i], col + c_mov[i]), isAccessible(r, col, i), dis[r + r_mov[i]][col + c_mov[i]]);
+
       if (isValid(r + r_mov[i], col + c_mov[i]) && isAccessible(r, col, i) && dis[r + r_mov[i]][col + c_mov[i]] == -1)
       {
         printf("enqueuing %d %d\n", (int)(r + r_mov[i]), (int)(col + c_mov[i]));
@@ -716,11 +729,137 @@ void exploreToStart()
   return;
 }
 
+extern "C" void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
+{
+  BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+  if (GPIO_Pin == BTN_IRCAL_PIN)
+  {
+    uint32_t now = millis();
+    if (now - lastIrCalTick > 200)
+    { // 200ms debounce
+      lastIrCalTick = now;
+      calibrateIR = true;
+      vTaskNotifyGiveFromISR((TaskHandle_t)HMITaskHandle, &xHigherPriorityTaskWoken);
+    }
+  }
+  else if (GPIO_Pin == BTN_BNOCAL_PIN)
+  {
+    calibrateBNO = true;
+    vTaskNotifyGiveFromISR((TaskHandle_t)BnoTaskHandle, &xHigherPriorityTaskWoken);
+  }
+  portYIELD_FROM_ISR(xHigherPriorityTaskWoken);
+}
+bool calibrateBnoAndSave(imu &bno)
+{
+  Calibration_t s{};
+  unsigned long start = millis();
+  const unsigned long TIMEOUT_MS = 120000;
+
+  printf("BNO Calibration...\n");
+  while (true)
+  {
+    bno.calibration_status(s);
+    printf("sys = %d", s.sys);
+    printf("  gyro = %d", s.gyro);
+    printf("  accel = %d", s.accel);
+    printf("  mag = %d\n", s.mag);
+    if (s.sys == 3 && s.gyro == 3 && s.accel == 3 /*&& s.mag == 3*/)
+      break;
+    if (millis() - start > TIMEOUT_MS)
+    {
+      printf("BNO Calibration timed out :(\n");
+      return false;
+    }
+
+    vTaskDelay(pdMS_TO_TICKS(200));
+  }
+
+  CalibProfile_t p;
+  bno.getOffsets(p);
+  uint8_t magic_value = EEPROM_MAGIC;
+  writeCalibration(&hi2c1, EEPROM_ADDR_BNO_VALID, &magic_value, 1);
+  if (writeCalibration(&hi2c1, EEPROM_ADDR_BNO_OFFSETS, p.data, 22))
+    printf("BNO calibration saved to EEPROM :)\n");
+  else
+    printf("saving to eeprom failed :(");
+  return true;
+}
+void IRCalibration(/*uint8_t sensor*/)
+{
+  printf("IR calibration: position robot and then press button2\r\n");
+  // for (int i = 0; i < 6; i++) {
+  // printf("Move %d to %d cm from wall, then press IR-CAL button\r\n", sensor, calDistances[i]);
+
+  // Block here until the EXTI ISR gives a notification for this button
+  ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+
+  long sum[6] = {0};
+  for (int s = 0; s < 20; s++)
+  {
+    for (int i = 0; i < 6; i++)
+      sum[i] += ir_readings[i];
+    vTaskDelay(pdMS_TO_TICKS(20));
+  }
+  // calReadings[sensor][i] = sum / 20;
+  for (int i = 0; i < 6; i++)
+    ir_thresh[i] = sum[i] / 20;
+  // }
+
+  // printf(" calReadings[%d] = ", sensor);
+  // for (int i = 0; i < 6; i++) printf("%ld, ", calReadings[sensor][i]);
+  printf("\r\ncalibration done\r\n");
+  calibrateIR = false;
+}
+bool saveIRCalToEEPROM(I2C_HandleTypeDef *i2c, int16_t thresholds[6])
+{
+  // write data block first
+  if (!writeCalibration(i2c, EEPROM_ADDR_IR_CAL, (uint8_t *)thresholds, 6 * sizeof(int16_t)))
+  {
+    printf("IR calibration EEPROM write FAILED\r\n");
+    return false;
+  }
+  // write magic byte LAST, only if data write succeeded
+  uint8_t magic = EEPROM_MAGIC;
+  if (!writeCalibration(i2c, EEPROM_ADDR_IR_VALID, &magic, 1))
+  {
+    printf("IR calibration magic byte write FAILED\r\n");
+    return false;
+  }
+  printf("IR thresholds saved to EEPROM: ");
+  for (int i = 0; i < 6; i++)
+    printf("%d ", thresholds[i]);
+  printf("\r\n");
+
+  return true;
+}
+bool loadIRCalFromEEPROM(I2C_HandleTypeDef *i2c)
+{
+  uint8_t magic = 0;
+  if (!readCalibration(i2c, EEPROM_ADDR_IR_VALID, &magic, 1))
+    return false;
+
+  if (magic != EEPROM_MAGIC)
+  {
+    printf("No valid IR calibration in EEPROM\r\n");
+    return false;
+  }
+  if (!readCalibration(i2c, EEPROM_ADDR_IR_CAL, (uint8_t *)ir_thresh, 6 * sizeof(int16_t)))
+  {
+    printf("IR calibration EEPROM read FAILED\r\n");
+    return false;
+  }
+  printf("IR thresholds loaded from EEPROM: ");
+  for (int i = 0; i < 6; i++)
+    printf("%d ", ir_thresh[i]);
+  printf("\r\n");
+  return true;
+}
 ////////////////////////////////////////////////TASKS////////////////////////////////////////////////////
 void StartDefaultTask_run(void *arg)
 {
   for (;;)
   {
+    ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
   }
 }
 
@@ -728,23 +867,32 @@ void bnoTask_run(void *arg)
 {
   TickType_t last = xTaskGetTickCount();
   bno.init();
-  double prevRawYaw=0;
-  double yawJumpThresh;//TODO
+  double prevRawYaw = 0;
+  double yawJumpThresh; // TODO
   for (;;)
   {
     vTaskDelayUntil(&last, pdMS_TO_TICKS(10));
-    vec_3 v = bno.euler();
-    vec_3 u = bno.gyro();
-    double rawYaw   = v.x();                    
-
-    if (fabs(angleDiff(prevRawYaw,rawYaw)) > yawJumpThresh) {
-      yawOffset += angleDiff(rawYaw, prevRawYaw); 
-      printf("-------------------------------------BNO jump detected, discrepancy=%f, new offset=%f", angleDiff(prevRawYaw,rawYaw), yawOffset);
+    if (calibrateBNO)
+    {
+      calibrateBnoAndSave(bno);
+      calibrateBNO = false;
     }
-    prevRawYaw = rawYaw;
-    euler = v;
-    euler.vec[0] += yawOffset;
-    gyro = u;
+    else
+    {
+      vec_3 v = bno.euler();
+      vec_3 u = bno.gyro();
+      double rawYaw = v.x();
+
+      if (fabs(angleDiff(prevRawYaw, rawYaw)) > yawJumpThresh)
+      {
+        yawOffset += angleDiff(rawYaw, prevRawYaw);
+        printf("-------------------------------------BNO jump detected, discrepancy=%f, new offset=%f", angleDiff(prevRawYaw, rawYaw), yawOffset);
+      }
+      prevRawYaw = rawYaw;
+      euler = v;
+      euler.vec[0] += yawOffset;
+      gyro = u;
+    }
   }
 }
 
@@ -760,7 +908,7 @@ void motionTask_run(void *arg)
   // for (int i = 0; i < 6; i++)
   //   ir_iir[i].init(1, 200.0f); // TODO:tune
   // write position
-  const float mm_per_tick = (float)M_PI * WHEEL_DIAMETER / ENCODER_CPR; // meter of travel per encoder tick
+  const float m_per_tick = (float)M_PI * WHEEL_DIAMETER / ENCODER_CPR; // meter of travel per encoder tick
   // ButterworthIIR velL;
   // ButterworthIIR velR;
   double dt = 0.005;
@@ -801,10 +949,11 @@ void motionTask_run(void *arg)
     lastCountR = raw_R;
 
     // TODO: et2akedy men dool
-    float distance_center = ((deltaL * mm_per_tick) + (deltaR * mm_per_tick)) / 2.0f;
+    float distance_center = ((deltaL * m_per_tick) + (deltaR * m_per_tick)) / 2.0f;
 
     // update global
     // 2 critical blocks 3ashan mesh taba3 ba3d w law 3ayez ye3mel interrupt mabenhom no problem
+    position.theta = euler.x() * M_PI / 180.0f;
     position.x += distance_center * cos(position.theta);
     position.y += distance_center * sin(position.theta);
   }
@@ -820,8 +969,9 @@ void controlTask_run(void *arg)
   {
     vTaskDelayUntil(&last, pdMS_TO_TICKS(5));
 
-    flood();;
-      // ir_readings[i + 1] = ir_iir[i + 1].filter(ir_readings[i + 1]);
+    flood();
+    ;
+    // ir_readings[i + 1] = ir_iir[i + 1].filter(ir_readings[i + 1]);
     printf("done flood \n");
     previous_run = current_run;
     exploreToCenter();
@@ -840,6 +990,7 @@ void algorithmTask_run(void *arg)
   // dont need this
   for (;;)
   {
+    ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
   }
 }
 
@@ -847,6 +998,23 @@ void HMIConfigTask_run(void *arg)
 {
   for (;;)
   {
+    ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+    if (calibrateIR)
+    {
+      set_motor_speeds(0, 0);
+      vTaskSuspend((TaskHandle_t)MotionTaskHandle);
+      vTaskSuspend((TaskHandle_t)ControlTaskHandle);
+
+      IRCalibration();
+      if (saveIRCalToEEPROM(&hi2c1, (int16_t *)ir_thresh))
+        printf("IRcalibration done and saved to eeprom\n");
+      else
+        printf("failed to save IRcalibration to eeprom\n");
+      calibrateIR = false;
+
+      vTaskResume((TaskHandle_t)MotionTaskHandle);
+      vTaskResume((TaskHandle_t)ControlTaskHandle);
+    }
   }
 }
 
@@ -854,6 +1022,7 @@ void loggerTask_run(void *arg)
 {
   for (;;)
   {
+    ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
   }
 }
 //////////////////////////////////////////////////END TASKS//////////////////////////////////////////////
@@ -861,6 +1030,32 @@ void app_main()
 {
   // Write your C++ application code here
   // This acts as your new int main()
+  
+  
+  HAL_ADC_Start_DMA(&hadc1, (uint32_t *)adc_dma_buffer, 3);
+  
+  // starts IR pwm
+  HAL_TIM_PWM_Start(&htim8, TIM_CHANNEL_1);
+  HAL_TIM_PWM_Start(&htim8, TIM_CHANNEL_2);
+  HAL_TIM_PWM_Start(&htim8, TIM_CHANNEL_3);
+  
+  // starts OC channel
+  HAL_TIM_OC_Start(&htim8, TIM_CHANNEL_4);
+  
+  // starts pwm write sequence
+  HAL_TIM_DMABurst_WriteStart(&htim8, TIM_DMABASE_CCR1, TIM_DMA_CC4,
+    (uint32_t *)ir_sequence,
+    TIM_DMABURSTLENGTH_3TRANSFERS);
+    
+    // starts the master 1000 Hz timer
+    HAL_TIM_PWM_Start(&htim4, TIM_CHANNEL_4);
+    HAL_TIM_Base_Start(&htim4);
+    
+    
+      /* Init scheduler */
+      osKernelInitialize(); /* Call init function for freertos objects (in cmsis_os2.c) */
+  /* Start scheduler */
+  osKernelStart();
   while (1)
   {
   }

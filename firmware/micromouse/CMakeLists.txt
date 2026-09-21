@@ -51,6 +51,7 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     Core/lib/pure_pursuit/pure_pursuit.cpp
     Core/lib/IIRFilter/iirFilter.cpp
     Core/lib/BNO055-driver/BNO055.cpp
+    Core/lib/eeprom/eeprom.c
 )
 
 # Add include paths
@@ -60,6 +61,7 @@ target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
         Core/lib/IIRFilter
         Core/lib/PDcontroller
         Core/lib/BNO055-driver
+        Core/lib/eeprom
 )
 
 # Add project symbols (macros)
