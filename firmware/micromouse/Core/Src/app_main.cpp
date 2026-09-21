@@ -419,7 +419,7 @@ void motionTask_run(void *arg)
   TickType_t last = xTaskGetTickCount();
   // iir filter
   // write position
-  const float mm_per_tick = (float)M_PI * WHEEL_DIAMETER / ENCODER_CPR; // meter of travel per encoder tick
+  const float m_per_tick = (float)M_PI * WHEEL_DIAMETER / ENCODER_CPR; // meter of travel per encoder tick
 
   double dt = ENCODER_TASK_DT_S;
   ButterworthIIR velL;
@@ -467,15 +467,15 @@ void motionTask_run(void *arg)
     lastCountR = raw_R;
 
     // --- counts -> distance (m) -> raw velocity (m/s) ---
-    float rawVelL = (deltaL * mm_per_tick) / ENCODER_TASK_DT_S;
-    float rawVelR = (deltaR * mm_per_tick) / ENCODER_TASK_DT_S;
+    float rawVelL = (deltaL * m_per_tick) / ENCODER_TASK_DT_S;
+    float rawVelR = (deltaR * m_per_tick) / ENCODER_TASK_DT_S;
     //////?????
     float velLfiltered = velL.filter(rawVelL);
     float velRfiltered = velR.filter(rawVelR);
     float v = (velLfiltered + velRfiltered) * 0.5f;       // m/s, forward speed
     float w = (velRfiltered - velLfiltered) / WHEEL_BASE; // rad/s, positive = turning left
     // TODO: et2akedy men dool
-    float distance_center = ((deltaL * mm_per_tick) + (deltaR * mm_per_tick)) * 0.5f;
+    float distance_center = ((deltaL * m_per_tick) + (deltaR * m_per_tick)) * 0.5f;
 
     /*straight line: PD Controller + IR centering + longitudinal correction with diagonal IRs
       turns: Pure pursuit only, corrected using gyro. there is no IR correction in turns
