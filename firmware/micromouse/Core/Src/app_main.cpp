@@ -19,7 +19,7 @@
 #include "eeprom.h"
 #include <cmath>
 #include <vector>
-//TODO: wrap ir stuff in CRITICAL sections cuz they're shared across more than 1 task
+// TODO: wrap ir stuff in CRITICAL sections cuz they're shared across more than 1 task
 /* TODO: Calibrate adc, check adc calibration modes...
  * useful links: https://deepbluembedded.com/stm32-adc-tutorial-complete-guide-with-examples/#introducing-stm32-adc
  *
@@ -42,6 +42,7 @@ enum MotionType
   STRAIGHT,
   STOP,
   TURN,
+  TESTING_WHEEL_SPEEDS,
 };
 
 typedef struct
@@ -80,7 +81,7 @@ uint16_t ir_sequence[9] = {
 bool walls[3] = {false}; // front left right
 vec_3 euler;             // TODO:IMPORTANT CHECK THE UNITS OF EULER
 vec_3 gyro;
-uint16_t ir_readings[6] = {0};                            // left_front, right_front, left,right,left_diag, right_diag
+uint16_t ir_readings[6] = {0}; // left_front, right_front, left,right,left_diag, right_diag
 // double ir_distance[6] = {1.0, 1.0, 1.0, 1.0, 1.0, 1.0}; // l7d ma el ir task ytktb  // in meters
 uint16_t ir_thresh[6];
 // uint32_t calReadings[4][6];
@@ -225,7 +226,7 @@ extern "C" void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
 bool calibrateBnoAndSave(imu &bno)
 {
   Calibration_t s{};
-  unsigned long start = millis(); // TODO: do the millis function
+  unsigned long start = millis();
   const unsigned long TIMEOUT_MS = 120000;
 
   printf("BNO Calibration...\n");
@@ -361,9 +362,9 @@ void StartDefaultTask_run(void *arg)
     {
       pausedAndReset = true;
       // STOP motors
-      motor_speeds(0, 0);
-      wheel_ref.left = 0;
-      wheel_ref.right = 0;
+      taskENTER_CRITICAL();
+      motionType = STOP;
+      taskEXIT_CRITICAL();
       // TODO:reset position
     }
 
@@ -379,7 +380,7 @@ void bnoTask_run(void *arg)
   bno.init();
   double prevRawYaw = bno.euler().x();
   double yawOffset = 0;
-  double yawJumpThresh; // TODO: tune
+  double yawJumpThresh=60; // TODO: tune
   if (loadBnoCalibration(bno))
     printf("loaded bnoCalibration successfully :)\n");
   else
@@ -420,7 +421,7 @@ void motionTask_run(void *arg)
   // write position
   const float mm_per_tick = (float)M_PI * WHEEL_DIAMETER / ENCODER_CPR; // meter of travel per encoder tick
 
-  double dt = ENCODER_TASK_DT_S; // TODO: is it better to calculate dt every loop?
+  double dt = ENCODER_TASK_DT_S;
   ButterworthIIR velL;
   ButterworthIIR velR;
 
@@ -436,12 +437,12 @@ void motionTask_run(void *arg)
   MotionType lastMotionTypeMotion = STOP;
   uint32_t last_cmd_id = 0; // b3rad el command id 3ashan ne know law command gdeda w nreset el controllers
   uint32_t ir_margin = 100; // TODO 3ashan benakhod el reading w hwa odam el 7eeta belzabt bas 3ayzeen nedeeh headroom
-  
+
   if (loadIRCalFromEEPROM(&hi2c1))
     printf("loaded IR calibration\n");
   else
     printf("no IR calibration in EEPROM\n");
-  
+
   for (;;)
   {
     vTaskDelayUntil(&last, pdMS_TO_TICKS(5));
@@ -449,11 +450,10 @@ void motionTask_run(void *arg)
     {
       ir_readings[i] = adc_dma_buffer[i / 2] & 0xFFFF;
       ir_readings[i + 1] = (adc_dma_buffer[i / 2] >> 16) & 0xFFFF;
-      // TODO: ir to distance and walls[];
-      walls[0] = (ir_readings[0] > ir_thresh[0] - ir_margin) || (ir_readings[1] > ir_thresh[1] - margin);
-      walls[1] = ir_readings[2] > ir_thresh[2] - ir_margin;
-      walls[2] = ir_readings[3] > ir_thresh[3] - ir_margin;
     }
+    walls[0] = (ir_readings[0] > ir_thresh[0] - ir_margin) || (ir_readings[1] > ir_thresh[1] - ir_margin);
+    walls[1] = ir_readings[2] > ir_thresh[2] - ir_margin;
+    walls[2] = ir_readings[3] > ir_thresh[3] - ir_margin;
     // raw counts
     // overflow logic for tim3 16bit
     uint16_t raw_R = __HAL_TIM_GET_COUNTER(&ENCODER_RIGHT_TIM);
@@ -500,6 +500,7 @@ void motionTask_run(void *arg)
     }
     float left_cmd = 0.0f;
     float right_cmd = 0.0f;
+
     if (current_motion != STOP)
     {
       left_cmd = leftCtrl.compute(wheel_speed.left, velLfiltered, dt);
@@ -527,7 +528,7 @@ void motionTask_run(void *arg)
 void controlTask_run(void *arg)
 {
   TickType_t last = xTaskGetTickCount();
-  double dt = 0.005; // TODO: is it better to calculate dt every loop?
+  double dt = 0.005;
   // std::vector<Point> path;
   PDController headingHoldPD(0, 0, -100, 100); // TODO:tune kp,kd
   PDController lateralPD(0, 0, -100, 100);     // TODO:tune kp,kd
@@ -537,6 +538,9 @@ void controlTask_run(void *arg)
   MotionType lastMotionTypeCtrl = STOP;
   uint32_t last_cmd_id = 0; // b3rad el command id 3ashan ne know law command gdeda w nreset el controllers
   bool status_sent = false; // 3shan ne send status only once when motion is done
+
+  Pose straight_start_pose;
+  float straight_target_dist = 0.18f;//cell in meters
 
   std::vector<Point> path_copy;
   uint32_t local_ver = 0;
@@ -579,15 +583,18 @@ void controlTask_run(void *arg)
       last_cmd_id = cmd;
       status_sent = false; // b nreeset el flag
       last_mode = -1;      // reset last mode to force re-evaluation of motion type
+
+      straight_start_pose = current_pose; // 3ashan a3raf el distance el mashaha fy STRAIGHT segment
     }
     // emergency stop if front wall detected & 🛺 lsa mkml staright
     if (current_motion == STRAIGHT && (wall_front))
-    {
-      // TODO: tune threshold
+    { // TODO: i think en hena wall_front is not correct 3ashan momken yeb2a shayef front wall bas mashy sa7
+      // lesa mesh hayekhbat ya3ny fa IMPORTANT
 
       taskENTER_CRITICAL();
       wheel_ref.left = 0.0;
       wheel_ref.right = 0.0;
+      motionType = STOP;
       taskEXIT_CRITICAL();
 
       if (!status_sent)
@@ -601,7 +608,7 @@ void controlTask_run(void *arg)
     if (current_motion == STRAIGHT)
     {
       // TODO: wrap reading the walls in CRITICAL section
-      double base_v = target_v;
+      double base_v = current_target_v;
       float lateral_error = 0.0f;
       if (walls[1] && walls[2])
       { // 2 side walls
@@ -628,10 +635,14 @@ void controlTask_run(void *arg)
       { // no side walls then hold current heading //dont know law dah momken ye7sal aslan bas better safe
         if (last_mode == -1)
         {
+          taskENTER_CRITICAL();
           target_heading = euler.x();
           last_mode = 3; // NO_WALLS
+          taskEXIT_CRITICAL();
         }
+        taskENTER_CRITICAL();
         float heading_error = wrapAngle(target_heading - euler.x());
+        taskEXIT_CRITICAL();
         lateral_correction = headingHoldPD.compute(0.0f, -heading_error, dt);
       }
       // TODO :
@@ -639,10 +650,25 @@ void controlTask_run(void *arg)
       wheel_ref.left = base_v - lateral_correction;
       wheel_ref.right = base_v + lateral_correction;
       taskEXIT_CRITICAL();
+
+      double dist_traveled = std::hypot(current_pose.x - straight_start_pose.x,
+                                        current_pose.y - straight_start_pose.y);
+      if (dist_traveled >= straight_target_dist && !status_sent && motionStatusQueue != NULL)
+      {
+        taskENTER_CRITICAL();
+        wheel_ref.left = 0.0;
+        wheel_ref.right = 0.0;
+        motionType = STOP;
+        taskEXIT_CRITICAL();
+
+        MotionStatus_t status = {false};
+        xQueueSend(motionStatusQueue, &status, 0);
+        status_sent = true;
+      }
     }
     else if (current_motion == TURN)
     {
-      wheelVelocity wheel_speed = purePursuit.computeControl(current_pose, v_measured, omega_measured, target_v, path_copy, dt);
+      wheelVelocity wheel_speed = purePursuit.computeControl(current_pose, v_measured, omega_measured, current_target_v, path_copy, dt);
       taskENTER_CRITICAL();
       wheel_ref = wheel_speed;
       taskEXIT_CRITICAL();
@@ -661,6 +687,13 @@ void controlTask_run(void *arg)
         }
       }
     }
+    else if (current_motion == TESTING_WHEEL_SPEEDS)
+    {
+      taskENTER_CRITICAL();
+      wheel_ref.left = current_target_v;
+      wheel_ref.right = current_target_v;
+      taskEXIT_CRITICAL();
+    }
     else if (current_motion == STOP)
     {
       // TODO: need to make a case for STOP
@@ -675,7 +708,7 @@ void controlTask_run(void *arg)
 }
 
 void algorithmTask_run(void *arg)
-{
+{ // have to check pausedAndReset bool before pushing any new command
   MotionStatus_t status;
   for (;;)
   {
@@ -705,8 +738,8 @@ void HMIConfigTask_run(void *arg)
 void loggerTask_run(void *arg)
 {
   for (;;)
-  {    ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
-
+  {
+    ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
   }
 }
 //////////////////////////////////////////////////END TASKS//////////////////////////////////////////////
