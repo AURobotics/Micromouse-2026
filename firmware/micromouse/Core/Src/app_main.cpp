@@ -312,7 +312,7 @@ void turn(double angle)
   }
   printf("done turning\n");
 
-  set_motor_speeds(0, 0);
+  // set_motor_speeds(0, 0);
   theoreticalHeading = currentAngle;
   theoreticalHeading -= (theoreticalHeading > 360) ? 360 : 0;
   theoreticalHeading += (theoreticalHeading < 0) ? 360 : 0;
@@ -382,13 +382,18 @@ bool moveF(double tiles = 16)            // if you want to move tile by tile use
       timeout_ctr++;
     }
     if (frontEmergency())
+    {
+      set_motor_speeds(0,0);
       break;
+    }
   }
 
   printf("Done moveF\n");
-  set_motor_speeds(0, 0);
   if (timeout_ctr >= 50)
+  {
+    set_motor_speeds(0,0);
     return 0;
+  }
   if (errorL > 10)
     return 0;
   return 1;
@@ -1037,7 +1042,6 @@ void controlTask_run(void *arg)
     vTaskDelayUntil(&last, pdMS_TO_TICKS(5));
 
     flood();
-    ;
     // ir_readings[i + 1] = ir_iir[i + 1].filter(ir_readings[i + 1]);
     printf("done flood \n");
     previous_run = current_run;
