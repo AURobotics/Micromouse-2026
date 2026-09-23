@@ -100,6 +100,14 @@ signed char c_mov[4] = {0, 1, 0, -1};
 bool calibrateIR = false;
 bool calibrateBNO = false;
 uint32_t lastIrCalTick = 0;
+typedef enum
+{
+  ROBOT_RUNNING,
+  ROBOT_STOPPED
+} RobotState_t;
+volatile RobotState_t robotState = ROBOT_RUNNING;
+volatile bool toggleRequested = false;
+uint32_t lastResetTick = 0;
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 uint32_t millis(void)
 {
@@ -746,6 +754,18 @@ extern "C" void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
     calibrateBNO = true;
     vTaskNotifyGiveFromISR((TaskHandle_t)BnoTaskHandle, &xHigherPriorityTaskWoken);
   }
+  else if (GPIO_Pin == BTN_STOP_START_PIN)
+  {
+    uint32_t now = millis();
+    if (now - lastResetTick > 200)
+    {
+      lastResetTick = now;
+      if (robotState == ROBOT_RUNNING)
+        set_motor_speeds(0, 0); 
+      toggleRequested = true;
+      vTaskNotifyGiveFromISR((TaskHandle_t)HMITaskHandle, &xHigherPriorityTaskWoken);
+    }
+  }
   portYIELD_FROM_ISR(xHigherPriorityTaskWoken);
 }
 bool calibrateBnoAndSave(imu &bno)
@@ -786,21 +806,22 @@ bool calibrateBnoAndSave(imu &bno)
     printf("saving to eeprom failed :(");
   return true;
 }
-bool loadBnoCalibration(imu& bno)
+bool loadBnoCalibration(imu &bno)
 {
   uint8_t magic;
-  readCalibration(&hi2c1,magic,EEPROM_ADDR_BNO_VALID,1);
-  if(magic == EEPROM_MAGIC)
+  readCalibration(&hi2c1, EEPROM_ADDR_BNO_VALID, &magic,1);
+  if (magic == EEPROM_MAGIC)
   {
     CalibProfile_t p;
-    readCalibration(&hi2c1,EEPROM_ADDR_BNO_OFFSETS,p.data,22);
+    readCalibration(&hi2c1, EEPROM_ADDR_BNO_OFFSETS, p.data, 22);
     bno.setOffsets(p);
-    for (int i = 0; i < 22; i++) printf("%d ",p.data[i]); 
+    for (int i = 0; i < 22; i++)
+      printf("%d ", p.data[i]);
     printf("\n");
     return true;
   }
 
-  return false;     
+  return false;
 }
 void IRCalibration(/*uint8_t sensor*/)
 {
@@ -887,11 +908,11 @@ void bnoTask_run(void *arg)
   bno.init();
   double prevRawYaw = 0;
   double yawJumpThresh; // TODO
-  if(loadBnoCalibration(bno))
+  if (loadBnoCalibration(bno))
     printf("BNO offsets loaded :)\n");
   else
     printf("no BNO offsets to load\n");
-  
+
   for (;;)
   {
     vTaskDelayUntil(&last, pdMS_TO_TICKS(10));
@@ -945,7 +966,7 @@ void motionTask_run(void *arg)
   EncoderCount_t lastCountL = countL;
   EncoderCount_t lastCountR = countR;
 
-  loadIRCalFromEEPROM();
+  loadIRCalFromEEPROM(&hi2c1);
   for (;;)
   {
     ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
@@ -1026,9 +1047,9 @@ void HMIConfigTask_run(void *arg)
     if (calibrateIR)
     {
       set_motor_speeds(0, 0);
-      vTaskSuspend((TaskHandle_t)MotionTaskHandle);
       vTaskSuspend((TaskHandle_t)ControlTaskHandle);
 
+      //waits for second press
       IRCalibration();
       if (saveIRCalToEEPROM(&hi2c1, (int16_t *)ir_thresh))
         printf("IRcalibration done and saved to eeprom\n");
@@ -1036,8 +1057,40 @@ void HMIConfigTask_run(void *arg)
         printf("failed to save IRcalibration to eeprom\n");
       calibrateIR = false;
 
-      vTaskResume((TaskHandle_t)MotionTaskHandle);
       vTaskResume((TaskHandle_t)ControlTaskHandle);
+    }
+
+    if (toggleRequested)
+    {
+      toggleRequested = false;
+
+      if (robotState == ROBOT_RUNNING)
+      {
+        // first press: STOP+RESET  
+        vTaskSuspend((TaskHandle_t)MotionTaskHandle);
+        osThreadTerminate(ControlTaskHandle); 
+
+        taskENTER_CRITICAL();
+        position = {0, 0, 0};
+        yawOffset = 0;
+        curr_r = 16; curr_c = 1; curr_dir = 0;
+        motionSuccessful = 1;
+        flooded = 0;
+        initialise(r_q, 300);
+        initialise(c_q, 300);
+        taskEXIT_CRITICAL();
+
+        robotState = ROBOT_STOPPED;
+        printf("Robot stopped and reset\n");
+      }
+      else
+      {
+        // second press: START 
+        ControlTaskHandle = osThreadNew(controlTask, NULL, &ControlTask_attributes);
+        vTaskResume((TaskHandle_t)MotionTaskHandle);
+        robotState = ROBOT_RUNNING;
+        printf("Robot started\n");
+      }
     }
   }
 }

@@ -30,6 +30,7 @@ extern "C" {
 #define BTN_IRCAL_PIN GPIO_PIN_13
 #define BTN_BNOCAL_GPIO_PORT GPIOB
 #define BTN_BNOCAL_PIN GPIO_PIN_14
+#define BTN_STOP_START_PIN GPIO_PIN_12
 
 #define EEPROM_MAGIC 0x42
 #define EEPROM_ADDR_BNO_VALID     0    // 1 byte
@@ -46,6 +47,8 @@ extern osThreadId_t BnoTaskHandle;
 extern osThreadId_t HMITaskHandle;
 extern osThreadId_t LoggerTaskHandle;
 extern osMessageQueueId_t LoggingQueueHandle;
+extern const osThreadAttr_t ControlTask_attributes;
+extern void controlTask(void *argument);
 
 void StartDefaultTask_run(void *arg);
 void bnoTask_run(void *arg);
