@@ -1,6 +1,8 @@
 #ifndef APP_MAIN_H
 #define APP_MAIN_H
 
+#include "cmsis_os2.h" 
+#include <stdint.h>
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -58,6 +60,7 @@ void algorithmTask_run(void *arg);
 void HMIConfigTask_run(void *arg);
 void loggerTask_run(void* arg);
 void app_main(); // This is your C++ entry function
+uint32_t millis(void);
 
 
 #ifdef __cplusplus

@@ -108,6 +108,14 @@ typedef enum
 volatile RobotState_t robotState = ROBOT_RUNNING;
 volatile bool toggleRequested = false;
 uint32_t lastResetTick = 0;
+
+// TODO: tune these // km_ff tau_ff kp ki
+FFPIConfig left_config = {0.05f, 0.12f, 0, 0};
+FFPIConfig right_config = {0.05f, 0.12f, 0, 0};
+static VelocityController leftCtrl(left_config);
+static VelocityController rightCtrl(right_config);
+float curr_left_velocity = 0.0f;
+float curr_right_velocity = 0.0f;
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 uint32_t millis(void)
 {
@@ -282,7 +290,9 @@ void turn(double angle)
     // }
 
     direction = (speed > 0 ? true : false);
-    set_motor_speeds(speed, -speed);
+    double left_speed = leftCtrl.compute(speed,curr_left_velocity);
+    double right_speed = rightCtrl.compute(-speed, curr_right_velocity);
+    set_motor_speeds(left_speed, right_speed);
 
     errorPrev = error;
     totalerror += error * dt;
@@ -359,7 +369,9 @@ bool moveF(double tiles = 16)            // if you want to move tile by tile use
 
     direction = (speedl >= 0 ? true : false);
 
-    set_motor_speeds(fixSpeed(speedl - speeda), -fixSpeed(speedl - speeda));
+    double left_speed = leftCtrl.compute(fixSpeed(speedl - speeda),curr_left_velocity);
+    double right_speed = rightCtrl.compute(-fixSpeed(speedl - speeda), curr_right_velocity);
+    set_motor_speeds(left_speed, right_speed );
 
     errorLPrev = errorL;
     errorAPrev = errorA;
@@ -889,7 +901,7 @@ bool loadIRCalFromEEPROM(I2C_HandleTypeDef *i2c)
   }
   printf("IR thresholds loaded from EEPROM: ");
   for (int i = 0; i < 6; i++)
-    printf("%d ", ir_thresh[i]);
+    printf("%f ", ir_thresh[i]);
   printf("\r\n");
   return true;
 }
@@ -990,6 +1002,9 @@ void motionTask_run(void *arg)
     countL = (EncoderCount_t)__HAL_TIM_GET_COUNTER(&ENCODER_LEFT_TIM);
     int32_t deltaL = (int32_t)(EncoderCount_t)(countL - lastCountL);
 
+    float rawVelL = (deltaL * m_per_tick) / ENCODER_TASK_DT_S;
+    float rawVelR = (deltaR * m_per_tick) / ENCODER_TASK_DT_S;
+
     lastCountL = countL;
     lastCountR = raw_R;
 
@@ -998,9 +1013,16 @@ void motionTask_run(void *arg)
 
     // update global
     // 2 critical blocks 3ashan mesh taba3 ba3d w law 3ayez ye3mel interrupt mabenhom no problem
+    taskENTER_CRITICAL();
     position.theta = euler.x();
     position.x += distance_center * cos(position.theta * M_PI / 180.0f);
     position.y += distance_center * sin(position.theta * M_PI / 180.0f);
+    taskEXIT_CRITICAL();
+
+    taskENTER_CRITICAL();
+    curr_left_velocity = rawVelL;
+    curr_right_velocity = rawVelR;
+    taskEXIT_CRITICAL();
   }
 }
 

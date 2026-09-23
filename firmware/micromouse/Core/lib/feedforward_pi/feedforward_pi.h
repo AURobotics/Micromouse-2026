@@ -38,7 +38,7 @@ public:
     void setConfig(const FFPIConfig& config);
     const FFPIConfig& getConfig() const;
     void reset();
-    float compute(float targetVelocity, float actualVelocity, float dt);
+    float compute(float targetVelocity, float actualVelocity);
     const FFPIDebug& getDebug() const;
     float getIntegral() const;
 
@@ -49,6 +49,7 @@ private:
     FFPIDebug lastDebug_;
     float integral_ = 0.0f;
     float prevTargetVelocity_ = 0.0f;
+    float lastComputeTime = 0.0f;
     bool firstCall_ = true;
 };
 

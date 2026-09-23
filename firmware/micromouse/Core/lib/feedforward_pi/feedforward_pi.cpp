@@ -1,39 +1,50 @@
 #include "feedforward_pi.h"
 
-VelocityController::VelocityController(const FFPIConfig& config)
+#include "app_main.h"
+VelocityController::VelocityController(const FFPIConfig &config)
     : cfg_(config) {}
 
-void VelocityController::setConfig(const FFPIConfig& config) {
+void VelocityController::setConfig(const FFPIConfig &config)
+{
     cfg_ = config;
 }
 
-const FFPIConfig& VelocityController::getConfig() const {
+const FFPIConfig &VelocityController::getConfig() const
+{
     return cfg_;
 }
 
-void VelocityController::reset() {
+void VelocityController::reset()
+{
     integral_ = 0.0f;
     prevTargetVelocity_ = 0.0f;
     firstCall_ = true;
     lastDebug_ = FFPIDebug();
 }
 
-//main control loop returns pwm value
-float VelocityController::compute(float targetVelocity,float actualVelocity, float dt) {
-    if (dt <= 0.0f) {
+// main control loop returns pwm value
+float VelocityController::compute(float targetVelocity, float actualVelocity)
+{
+
+    float now = millis();
+    float dt = now - lastComputeTime;
+    lastComputeTime = now;
+    if (dt <= 0.0f)
+    {
         return lastDebug_.output;
     }
-    
-    if(firstCall_){
+    //TODO:need to clamp dt jsut in case it ended up as a large value?
+    if (firstCall_)
+    {
         prevTargetVelocity_ = targetVelocity;
         firstCall_ = false;
     }
 
-    //feedforward
-    float w_ref_dot = (targetVelocity - prevTargetVelocity_)/dt;
-    float ff = targetVelocity / cfg_.km_ff + w_ref_dot * (cfg_.tau_ff/cfg_.km_ff);
+    // feedforward
+    float w_ref_dot = (targetVelocity - prevTargetVelocity_) / dt;
+    float ff = targetVelocity / cfg_.km_ff + w_ref_dot * (cfg_.tau_ff / cfg_.km_ff);
 
-    //PI
+    // PI
     float error = targetVelocity - actualVelocity;
     float pTerm = cfg_.kP * error;
 
@@ -46,14 +57,15 @@ float VelocityController::compute(float targetVelocity,float actualVelocity, flo
 
     bool saturated = rawOutput != output;
     bool wouldReduceSaturation =
-    (rawOutput > cfg_.outputMax && error < 0.0f) ||
-    (rawOutput < cfg_.outputMin && error > 0.0f);
-    
-    //only accumulate if not saturated or if accumulating would reduce saturation
-    if (!saturated || wouldReduceSaturation) {
+        (rawOutput > cfg_.outputMax && error < 0.0f) ||
+        (rawOutput < cfg_.outputMin && error > 0.0f);
+
+    // only accumulate if not saturated or if accumulating would reduce saturation
+    if (!saturated || wouldReduceSaturation)
+    {
         integral_ = integral;
     }
-    
+
     lastDebug_.targetVelocity = targetVelocity;
     lastDebug_.actualVelocity = actualVelocity;
     lastDebug_.error = error;
@@ -62,23 +74,27 @@ float VelocityController::compute(float targetVelocity,float actualVelocity, flo
     lastDebug_.iTerm = iTerm;
     lastDebug_.output = output;
     lastDebug_.saturated = saturated;
-    
+
     prevTargetVelocity_ = targetVelocity;
     return output;
 }
 
-//for logging
-const FFPIDebug& VelocityController::getDebug() const {
+// for logging
+const FFPIDebug &VelocityController::getDebug() const
+{
     return lastDebug_;
 }
 
-float VelocityController::getIntegral() const {
+float VelocityController::getIntegral() const
+{
     return integral_;
 }
 
-
-float VelocityController::clamp(float value, float lo, float hi) {
-    if (value < lo) return lo;
-    if (value > hi) return hi;
+float VelocityController::clamp(float value, float lo, float hi)
+{
+    if (value < lo)
+        return lo;
+    if (value > hi)
+        return hi;
     return value;
 }
