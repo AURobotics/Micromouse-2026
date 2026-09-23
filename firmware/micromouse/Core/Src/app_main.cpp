@@ -259,6 +259,7 @@ void turn(double angle)
 
   int counter = 0;
 
+  set_motor_speeds(0, 0);
   while (fabs(error) > 1 || fabs(gyro.x()) > 0.5)
   {
     vTaskDelay(1);
@@ -290,7 +291,7 @@ void turn(double angle)
     // }
 
     direction = (speed > 0 ? true : false);
-    double left_speed = leftCtrl.compute(speed,curr_left_velocity);
+    double left_speed = leftCtrl.compute(speed, curr_left_velocity);
     double right_speed = rightCtrl.compute(-speed, curr_right_velocity);
     set_motor_speeds(left_speed, right_speed);
 
@@ -369,9 +370,9 @@ bool moveF(double tiles = 16)            // if you want to move tile by tile use
 
     direction = (speedl >= 0 ? true : false);
 
-    double left_speed = leftCtrl.compute(fixSpeed(speedl - speeda),curr_left_velocity);
+    double left_speed = leftCtrl.compute(fixSpeed(speedl - speeda), curr_left_velocity);
     double right_speed = rightCtrl.compute(-fixSpeed(speedl - speeda), curr_right_velocity);
-    set_motor_speeds(left_speed, right_speed );
+    set_motor_speeds(left_speed, right_speed);
 
     errorLPrev = errorL;
     errorAPrev = errorA;
@@ -383,7 +384,7 @@ bool moveF(double tiles = 16)            // if you want to move tile by tile use
     }
     if (frontEmergency())
     {
-      set_motor_speeds(0,0);
+      set_motor_speeds(0, 0);
       break;
     }
   }
@@ -391,7 +392,7 @@ bool moveF(double tiles = 16)            // if you want to move tile by tile use
   printf("Done moveF\n");
   if (timeout_ctr >= 50)
   {
-    set_motor_speeds(0,0);
+    set_motor_speeds(0, 0);
     return 0;
   }
   if (errorL > 10)
@@ -551,7 +552,7 @@ void flood(bool goal = 1)
   }
 }
 
-bool moveTo(char r, char c)
+bool moveTo(char r, char c, int tiles = 1)
 {
   // get where I want to move relative to abolute direction (y3ny lw el robot bases north) ana lesa m2alef el term dah
   short dir;
@@ -591,7 +592,7 @@ bool moveTo(char r, char c)
   else if (dir == curr_dir) // move forward
   {
     printf("moving forward\n");
-    if (!moveF(1))
+    if (!moveF(tiles))
       return 0; // moveForward();
   }
   else // turn 180
@@ -603,7 +604,7 @@ bool moveTo(char r, char c)
     curr_dir += 2;
     curr_dir %= 4;
     printf("moving forward\n");
-    if (!moveF(1))
+    if (!moveF(tiles))
       return 0; // moveForward();
   }
 
@@ -677,7 +678,36 @@ void exploreToCenter()
     {
       flooded = 0;
       printf("Start moving\n");
-      motionSuccessful = moveTo(next_r, next_c); // if failed, i want it to retake the ir readings
+      int tilesToMove = 1;
+
+      short moveDir;
+      if (next_r < curr_r)
+        moveDir = 0;
+      else if (next_r > curr_r)
+        moveDir = 2;
+      else if (next_c < curr_c)
+        moveDir = 3;
+      else
+        moveDir = 1;
+
+      if (moveDir == curr_dir) // only chain if we're already facing that way ya3ny mafeesh turn coming
+      {
+        char peek_r = next_r + r_mov[moveDir];
+        char peek_c = next_c + c_mov[moveDir];
+
+        if (isValid(peek_r, peek_c) &&
+            isAccessible(next_r, next_c, moveDir) &&
+            maze[next_r][next_c][4] && // next_r/c walls already known
+            dis[peek_r][peek_c] < dis[next_r][next_c])
+        {
+          next_r = peek_r;
+          next_c = peek_c;
+          tilesToMove = 2;
+        }
+      }
+
+      motionSuccessful = moveTo(next_r, next_c, tilesToMove);
+      // motionSuccessful = moveTo(next_r, next_c); // if failed, i want it to retake the ir readings
       printf("done moving\n");
     }
   }
@@ -778,7 +808,7 @@ extern "C" void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
     {
       lastResetTick = now;
       if (robotState == ROBOT_RUNNING)
-        set_motor_speeds(0, 0); 
+        set_motor_speeds(0, 0);
       toggleRequested = true;
       vTaskNotifyGiveFromISR((TaskHandle_t)HMITaskHandle, &xHigherPriorityTaskWoken);
     }
@@ -826,7 +856,7 @@ bool calibrateBnoAndSave(imu &bno)
 bool loadBnoCalibration(imu &bno)
 {
   uint8_t magic;
-  readCalibration(&hi2c1, EEPROM_ADDR_BNO_VALID, &magic,1);
+  readCalibration(&hi2c1, EEPROM_ADDR_BNO_VALID, &magic, 1);
   if (magic == EEPROM_MAGIC)
   {
     CalibProfile_t p;
@@ -1075,7 +1105,7 @@ void HMIConfigTask_run(void *arg)
       set_motor_speeds(0, 0);
       vTaskSuspend((TaskHandle_t)ControlTaskHandle);
 
-      //waits for second press
+      // waits for second press
       IRCalibration();
       if (saveIRCalToEEPROM(&hi2c1, (int16_t *)ir_thresh))
         printf("IRcalibration done and saved to eeprom\n");
@@ -1092,14 +1122,16 @@ void HMIConfigTask_run(void *arg)
 
       if (robotState == ROBOT_RUNNING)
       {
-        // first press: STOP+RESET  
+        // first press: STOP+RESET
         vTaskSuspend((TaskHandle_t)MotionTaskHandle);
-        osThreadTerminate(ControlTaskHandle); 
+        osThreadTerminate(ControlTaskHandle);
 
         taskENTER_CRITICAL();
         position = {0, 0, 0};
         yawOffset = 0;
-        curr_r = 16; curr_c = 1; curr_dir = 0;
+        curr_r = 16;
+        curr_c = 1;
+        curr_dir = 0;
         motionSuccessful = 1;
         flooded = 0;
         initialise(r_q, 300);
@@ -1111,7 +1143,7 @@ void HMIConfigTask_run(void *arg)
       }
       else
       {
-        // second press: START 
+        // second press: START
         ControlTaskHandle = osThreadNew(controlTask, NULL, &ControlTask_attributes);
         vTaskResume((TaskHandle_t)MotionTaskHandle);
         robotState = ROBOT_RUNNING;
