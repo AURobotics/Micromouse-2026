@@ -45,10 +45,9 @@ uint16_t ir_sequence[9] = {
     1260, 0, 0  // Pulse 3: Only Channel 1 is ON
 };
 
-bool walls[3] = {0};
 double ir_readings[6] = {0};              // left_front, right_front, left,right,left_diag, right_diag
 double ir_thresh[6] = {1, 1, 1, 1, 1, 1}; // TODO
-double ir_distance[6] = {0};
+// double ir_distance[6] = {0};
 struct Pose position = {0, 0, 0};
 double yawOffset;
 double theoreticalHeading = 0;
@@ -61,11 +60,11 @@ bool menu = false;
  * mesh katbeen el tasks henak fy freertos.c 3ashan el global variables kolaha teb2a hena
  * w el tasks and stuff cpp
  */
-#define MAX_H 18 // 18
+#define MAX_H 18 // TODO:mesh heya 16x16???
 #define MAX_W 18 // 18
 #define QUEUE_MAX (MAX_H * MAX_W)
 char curr_dir = 0; // 0--> North, 1 --> East, 2 --> South, 3 --> West
-char curr_r = 8, curr_c = 1;
+char curr_r = 16, curr_c = 1;
 
 int current_run;
 int previous_run;
@@ -161,27 +160,27 @@ void set_motor_speeds(int16_t left_duty, int16_t right_duty)
     right_duty = -999;
 
   // TODO: define channels
-  //    if (right_duty >= 0)
-  //  {
-  //      __HAL_TIM_SET_COMPARE(&htim1, MOTOR_RIGHT_FORWARD_CHANNEL, right_duty);
-  //      __HAL_TIM_SET_COMPARE(&htim1, MOTOR_RIGHT_BACKWARD_CHANNEL, 0);
-  //  }
-  //  else
-  //  {
-  //      __HAL_TIM_SET_COMPARE(&htim1, MOTOR_RIGHT_FORWARD_CHANNEL, 0);
-  //      __HAL_TIM_SET_COMPARE(&htim1, MOTOR_RIGHT_BACKWARD_CHANNEL, -right_duty);
-  //  }
+  if (right_duty >= 0)
+  {
+    __HAL_TIM_SET_COMPARE(&htim1, MOTOR_RIGHT_FORWARD_CHANNEL, right_duty);
+    __HAL_TIM_SET_COMPARE(&htim1, MOTOR_RIGHT_BACKWARD_CHANNEL, 0);
+  }
+  else
+  {
+    __HAL_TIM_SET_COMPARE(&htim1, MOTOR_RIGHT_FORWARD_CHANNEL, 0);
+    __HAL_TIM_SET_COMPARE(&htim1, MOTOR_RIGHT_BACKWARD_CHANNEL, -right_duty);
+  }
 
-  //   if (left_duty >= 0)
-  // {
-  //     __HAL_TIM_SET_COMPARE(&htim1, MOTOR_RIGHT_FORWARD_CHANNEL, left_duty);
-  //     __HAL_TIM_SET_COMPARE(&htim1, MOTOR_RIGHT_BACKWARD_CHANNEL, 0);
-  // }
-  // else
-  // {
-  //     __HAL_TIM_SET_COMPARE(&htim1, MOTOR_RIGHT_FORWARD_CHANNEL, 0);
-  //     __HAL_TIM_SET_COMPARE(&htim1, MOTOR_RIGHT_BACKWARD_CHANNEL, -left_duty);
-  // }
+  if (left_duty >= 0)
+  {
+    __HAL_TIM_SET_COMPARE(&htim1, MOTOR_LEFT_FORWARD_CHANNEL, left_duty);
+    __HAL_TIM_SET_COMPARE(&htim1, MOTOR_LEFT_BACKWARD_CHANNEL, 0);
+  }
+  else
+  {
+    __HAL_TIM_SET_COMPARE(&htim1, MOTOR_LEFT_FORWARD_CHANNEL, 0);
+    __HAL_TIM_SET_COMPARE(&htim1, MOTOR_LEFT_BACKWARD_CHANNEL, -left_duty);
+  }
 }
 inline double calculateDistance(double x, double y)
 {
@@ -285,7 +284,7 @@ void turn(double angle)
     if (counter >= 40)
       break;
 
-    if (lastPrint - millis() >= 100)
+    if (millis() - lastPrint >= 100)
     {
       printf("turning %f, yaw=%f, error=%f, speed=%f, rate=%f,yaw offset=%f\n",
              desiredAngle, position.theta, error, speed, gyro.x(), yawOffset);
@@ -386,9 +385,9 @@ extern "C" void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef *hadc)
     HAL_TIM_GenerateEvent(&htim2, TIM_EVENTSOURCE_UPDATE);
     __HAL_TIM_CLEAR_FLAG(&htim2, TIM_FLAG_UPDATE);
 
-    // BaseType_t xHigherPriorityTaskWoken = pdFALSE;
-    // vTaskNotifyGiveFromISR((TaskHandle_t)MotionTaskHandle, &xHigherPriorityTaskWoken);
-    // portYIELD_FROM_ISR(xHigherPriorityTaskWoken);
+    BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+    vTaskNotifyGiveFromISR((TaskHandle_t)MotionTaskHandle, &xHigherPriorityTaskWoken);
+    portYIELD_FROM_ISR(xHigherPriorityTaskWoken);
   }
 }
 // printf->SWO
@@ -776,13 +775,32 @@ bool calibrateBnoAndSave(imu &bno)
 
   CalibProfile_t p;
   bno.getOffsets(p);
-  uint8_t magic_value = EEPROM_MAGIC;
-  writeCalibration(&hi2c1, EEPROM_ADDR_BNO_VALID, &magic_value, 1);
+
   if (writeCalibration(&hi2c1, EEPROM_ADDR_BNO_OFFSETS, p.data, 22))
+  {
     printf("BNO calibration saved to EEPROM :)\n");
+    uint8_t magic_value = EEPROM_MAGIC;
+    writeCalibration(&hi2c1, EEPROM_ADDR_BNO_VALID, &magic_value, 1);
+  }
   else
     printf("saving to eeprom failed :(");
   return true;
+}
+bool loadBnoCalibration(imu& bno)
+{
+  uint8_t magic;
+  readCalibration(&hi2c1,magic,EEPROM_ADDR_BNO_VALID,1);
+  if(magic == EEPROM_MAGIC)
+  {
+    CalibProfile_t p;
+    readCalibration(&hi2c1,EEPROM_ADDR_BNO_OFFSETS,p.data,22);
+    bno.setOffsets(p);
+    for (int i = 0; i < 22; i++) printf("%d ",p.data[i]); 
+    printf("\n");
+    return true;
+  }
+
+  return false;     
 }
 void IRCalibration(/*uint8_t sensor*/)
 {
@@ -869,6 +887,11 @@ void bnoTask_run(void *arg)
   bno.init();
   double prevRawYaw = 0;
   double yawJumpThresh; // TODO
+  if(loadBnoCalibration(bno))
+    printf("BNO offsets loaded :)\n");
+  else
+    printf("no BNO offsets to load\n");
+  
   for (;;)
   {
     vTaskDelayUntil(&last, pdMS_TO_TICKS(10));
@@ -919,9 +942,10 @@ void motionTask_run(void *arg)
 
   EncoderCount_t countL = (EncoderCount_t)__HAL_TIM_GET_COUNTER(&ENCODER_LEFT_TIM);
   EncoderCount_t countR = (EncoderCount_t)__HAL_TIM_GET_COUNTER(&ENCODER_RIGHT_TIM);
-  EncoderCount_t lastCountL = 0;
-  EncoderCount_t lastCountR = 0;
+  EncoderCount_t lastCountL = countL;
+  EncoderCount_t lastCountR = countR;
 
+  loadIRCalFromEEPROM();
   for (;;)
   {
     ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
@@ -953,9 +977,9 @@ void motionTask_run(void *arg)
 
     // update global
     // 2 critical blocks 3ashan mesh taba3 ba3d w law 3ayez ye3mel interrupt mabenhom no problem
-    position.theta = euler.x() * M_PI / 180.0f;
-    position.x += distance_center * cos(position.theta);
-    position.y += distance_center * sin(position.theta);
+    position.theta = euler.x();
+    position.x += distance_center * cos(position.theta * M_PI / 180.0f);
+    position.y += distance_center * sin(position.theta * M_PI / 180.0f);
   }
 }
 
@@ -1030,30 +1054,28 @@ void app_main()
 {
   // Write your C++ application code here
   // This acts as your new int main()
-  
-  
+
   HAL_ADC_Start_DMA(&hadc1, (uint32_t *)adc_dma_buffer, 3);
-  
+
   // starts IR pwm
   HAL_TIM_PWM_Start(&htim8, TIM_CHANNEL_1);
   HAL_TIM_PWM_Start(&htim8, TIM_CHANNEL_2);
   HAL_TIM_PWM_Start(&htim8, TIM_CHANNEL_3);
-  
+
   // starts OC channel
   HAL_TIM_OC_Start(&htim8, TIM_CHANNEL_4);
-  
+
   // starts pwm write sequence
   HAL_TIM_DMABurst_WriteStart(&htim8, TIM_DMABASE_CCR1, TIM_DMA_CC4,
-    (uint32_t *)ir_sequence,
-    TIM_DMABURSTLENGTH_3TRANSFERS);
-    
-    // starts the master 1000 Hz timer
-    HAL_TIM_PWM_Start(&htim4, TIM_CHANNEL_4);
-    HAL_TIM_Base_Start(&htim4);
-    
-    
-      /* Init scheduler */
-      osKernelInitialize(); /* Call init function for freertos objects (in cmsis_os2.c) */
+                              (uint32_t *)ir_sequence,
+                              TIM_DMABURSTLENGTH_3TRANSFERS);
+
+  // starts the master 1000 Hz timer
+  HAL_TIM_PWM_Start(&htim4, TIM_CHANNEL_4);
+  HAL_TIM_Base_Start(&htim4);
+
+  /* Init scheduler */
+  osKernelInitialize(); /* Call init function for freertos objects (in cmsis_os2.c) */
   /* Start scheduler */
   osKernelStart();
   while (1)
