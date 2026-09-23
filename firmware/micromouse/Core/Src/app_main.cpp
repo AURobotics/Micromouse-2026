@@ -919,7 +919,7 @@ void bnoTask_run(void *arg)
   TickType_t last = xTaskGetTickCount();
   bno.init();
   double prevRawYaw = 0;
-  double yawJumpThresh; // TODO
+  double yawJumpThresh = 100; // TODO
   if (loadBnoCalibration(bno))
     printf("BNO offsets loaded :)\n");
   else
