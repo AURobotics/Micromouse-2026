@@ -1069,21 +1069,33 @@ void controlTask_run(void *arg)
 
   for (;;)
   {
-    vTaskDelayUntil(&last, pdMS_TO_TICKS(5));
+    for (int i = 0; i < 4; i++)
+    {
+      moveF(1);
+      vTaskDelay(pdMS_TO_TICKS(500));
+      turn(90);
+      vTaskDelay(pdMS_TO_TICKS(500));
+    }
 
-    flood();
-    // ir_readings[i + 1] = ir_iir[i + 1].filter(ir_readings[i + 1]);
-    printf("done flood \n");
-    previous_run = current_run;
-    exploreToCenter();
-    printf("done exploretocenter\n");
-    current_run = dis[16][1];
-    // if (current_run != 0 && current_run == previous_run) break;
-    flood(0);
-    printf("done flood to begin\n");
-    exploreToStart();
-    printf("done exploretostart\n");
+    vTaskDelay(pdMS_TO_TICKS(3000));
   }
+  // for (;;)
+  // {
+  //   vTaskDelayUntil(&last, pdMS_TO_TICKS(5));
+
+  //   flood();
+  //   // ir_readings[i + 1] = ir_iir[i + 1].filter(ir_readings[i + 1]);
+  //   printf("done flood \n");
+  //   previous_run = current_run;
+  //   exploreToCenter();
+  //   printf("done exploretocenter\n");
+  //   current_run = dis[16][1];
+  //   // if (current_run != 0 && current_run == previous_run) break;
+  //   flood(0);
+  //   printf("done flood to begin\n");
+  //   exploreToStart();
+  //   printf("done exploretostart\n");
+  // }
 }
 
 void algorithmTask_run(void *arg)
