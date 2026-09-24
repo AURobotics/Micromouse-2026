@@ -86,11 +86,14 @@ void NMI_Handler(void)
   */
 void HardFault_Handler(void)
 {
-  RCC->AHB1ENR |= RCC_AHB1ENR_GPIOCEN;
-  GPIOC->MODER &= ~(3 << (10*2));
-  GPIOC->MODER |=  (1 << (10*2));
-  GPIOC->BSRR = GPIO_PIN_10;
-  while (1) {}
+  /* USER CODE BEGIN HardFault_IRQn 0 */
+
+  /* USER CODE END HardFault_IRQn 0 */
+  while (1)
+  {
+    /* USER CODE BEGIN W1_HardFault_IRQn 0 */
+    /* USER CODE END W1_HardFault_IRQn 0 */
+  }
 }
 
 /**

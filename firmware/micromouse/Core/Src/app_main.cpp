@@ -13,6 +13,7 @@
 #include "PDcontroller.h"
 #include "BNO055.h"
 #include "eeprom.h"
+#include "core_cm4.h"
 
 #define constrain(amt, low, high) ((amt) < (low) ? (low) : ((amt) > (high) ? (high) : (amt)))
 struct queue
@@ -405,15 +406,15 @@ extern "C" void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef *hadc)
   if (hadc->Instance == ADC1)
   {
     // stop
-    HAL_TIM_Base_Stop(&htim2);
-    __HAL_TIM_SET_COUNTER(&htim2, 0);
-    __HAL_TIM_SetCompare(&htim2, 0, 1260);
-    HAL_TIM_GenerateEvent(&htim2, TIM_EVENTSOURCE_UPDATE);
-    __HAL_TIM_CLEAR_FLAG(&htim2, TIM_FLAG_UPDATE);
+    // HAL_TIM_Base_Stop(&htim2);
+    // __HAL_TIM_SET_COUNTER(&htim2, 0);
+    // __HAL_TIM_SetCompare(&htim2, 0, 1260);
+    // HAL_TIM_GenerateEvent(&htim2, TIM_EVENTSOURCE_UPDATE);
+    // __HAL_TIM_CLEAR_FLAG(&htim2, TIM_FLAG_UPDATE);
 
-    BaseType_t xHigherPriorityTaskWoken = pdFALSE;
-    vTaskNotifyGiveFromISR((TaskHandle_t)MotionTaskHandle, &xHigherPriorityTaskWoken);
-    portYIELD_FROM_ISR(xHigherPriorityTaskWoken);
+    // BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+    // vTaskNotifyGiveFromISR((TaskHandle_t)MotionTaskHandle, &xHigherPriorityTaskWoken);
+    // portYIELD_FROM_ISR(xHigherPriorityTaskWoken);
   }
 }
 // printf->SWO
@@ -940,6 +941,74 @@ bool loadIRCalFromEEPROM(I2C_HandleTypeDef *i2c)
   printf("\r\n");
   return true;
 }
+void DWT_Init(void)
+{
+  CoreDebug->DEMCR |= CoreDebug_DEMCR_TRCENA_Msk;
+  DWT->CYCCNT = 0;
+  DWT->CTRL |= DWT_CTRL_CYCCNTENA_Msk;
+}
+
+void delay_us(uint32_t us)
+{
+  uint32_t start = DWT->CYCCNT;
+  uint32_t cycles = us * (SystemCoreClock / 1000000UL);
+  while ((DWT->CYCCNT - start) < cycles)
+    ;
+}
+typedef struct
+{
+  GPIO_TypeDef *trig_port;
+  uint16_t trig_pin;
+  uint32_t adc_channel;
+  const char *name; // for debugging
+} IRSensor_t;
+IRSensor_t irSensors[6] = {
+    {GPIOC, GPIO_PIN_8, ADC_CHANNEL_10, "front_left"},  // PC0 = ADC1_F_L, triggered by FRONT_TRIG (PC8)
+    {GPIOC, GPIO_PIN_8, ADC_CHANNEL_10, "front_right"}, // TODO: confirm right front-pair ADC channel
+    {GPIOC, GPIO_PIN_6, ADC_CHANNEL_12, "left"},        // PC2 = ADC1_L, triggered by SIDE_TRIG (PC6)
+    {GPIOC, GPIO_PIN_6, ADC_CHANNEL_12, "right"},       // TODO: confirm right-side ADC channel
+    {GPIOC, GPIO_PIN_7, ADC_CHANNEL_11, "left_diag"},   // PC1 = ADC1_L_D, triggered by DIAGONAL_TRIG (PC7)
+    {GPIOC, GPIO_PIN_7, ADC_CHANNEL_11, "right_diag"},  // TODO: confirm right-diag ADC channel
+};
+uint32_t readIRSensor(IRSensor_t *sensor, uint32_t pulse_width_us, uint32_t settle_delay_us)
+{
+  // Fire emitter
+  HAL_GPIO_WritePin(sensor->trig_port, sensor->trig_pin, GPIO_PIN_SET);
+  delay_us(pulse_width_us);
+  HAL_GPIO_WritePin(sensor->trig_port, sensor->trig_pin, GPIO_PIN_RESET);
+
+  // Wait for receiver to settle
+  delay_us(settle_delay_us);
+
+  // Configure and sample the ADC channel
+  ADC_ChannelConfTypeDef sConfig = {0};
+  sConfig.Channel = sensor->adc_channel;
+  sConfig.Rank = 1;
+  sConfig.SamplingTime = ADC_SAMPLETIME_15CYCLES;
+  if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+
+  HAL_ADC_Start(&hadc1);
+  if (HAL_ADC_PollForConversion(&hadc1, 10) != HAL_OK)
+  {
+    HAL_ADC_Stop(&hadc1);
+    return 0xFFFFFFFF; // read failed
+  }
+  uint32_t value = HAL_ADC_GetValue(&hadc1);
+  HAL_ADC_Stop(&hadc1);
+
+  return value;
+}
+void readAllIRSensors(uint32_t pulse_width_us, uint32_t settle_delay_us)
+{
+  for (int i = 0; i < 6; i++)
+  {
+    uint32_t val = readIRSensor(&irSensors[i], pulse_width_us, settle_delay_us);
+    ir_readings[i] = (double)val;
+  }
+}
 ////////////////////////////////////////////////TASKS////////////////////////////////////////////////////
 void StartDefaultTask_run(void *arg)
 {
@@ -1027,7 +1096,13 @@ void motionTask_run(void *arg)
     //   // ir_readings[i] = ir_iir[i].filter(ir_readings[i]);
     //   // ir_readings[i + 1] = ir_iir[i + 1].filter(ir_readings[i + 1]);
     // }
+//     readAllIRSensors(100, 50);
 
+//     if (ir_readings[0] > 200)
+//     HAL_GPIO_WritePin(GPIOC, GPIO_PIN_10, GPIO_PIN_SET); 
+// else
+//     HAL_GPIO_WritePin(GPIOC, GPIO_PIN_10, GPIO_PIN_RESET);
+HAL_GPIO_WritePin(irSensors[0].trig_port, irSensors[0]trig_pin, GPIO_PIN_SET);
     //   ///////////////////////ENCODERS/////////////////////
     //   // overflow logic for 16bit timer tim3
     uint16_t raw_R = __HAL_TIM_GET_COUNTER(&ENCODER_RIGHT_TIM);
@@ -1042,10 +1117,10 @@ void motionTask_run(void *arg)
 
     lastCountL = countL;
     lastCountR = raw_R;
-    if (raw_R & 0x01)
-      HAL_GPIO_WritePin(GPIOC, GPIO_PIN_10, GPIO_PIN_SET);
-    else
-      HAL_GPIO_WritePin(GPIOC, GPIO_PIN_10, GPIO_PIN_RESET);
+    // if (raw_R & 0x01)
+    //   HAL_GPIO_WritePin(GPIOC, GPIO_PIN_10, GPIO_PIN_SET);
+    // else
+    //   HAL_GPIO_WritePin(GPIOC, GPIO_PIN_10, GPIO_PIN_RESET);
     // TODO: et2akedy men dool
     float distance_center = ((deltaL * m_per_tick) + (deltaR * m_per_tick)) / 2.0f;
 
@@ -1182,46 +1257,24 @@ void loggerTask_run(void *arg)
 //////////////////////////////////////////////////END TASKS//////////////////////////////////////////////
 void app_main()
 {
-  // Write your C++ application code here
-  // This acts as your new int main()
+    HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
+    HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_2);
+    HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_3);
+    HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_4);
 
-  HAL_ADC_Start_DMA(&hadc1, (uint32_t *)adc_dma_buffer, 3);
+    HAL_TIM_Encoder_Start(&htim2, TIM_CHANNEL_ALL);
+    HAL_TIM_Encoder_Start(&htim3, TIM_CHANNEL_ALL);
 
-  // starts IR pwm
-  HAL_TIM_PWM_Start(&htim8, TIM_CHANNEL_1);
-  HAL_TIM_PWM_Start(&htim8, TIM_CHANNEL_2);
-  HAL_TIM_PWM_Start(&htim8, TIM_CHANNEL_3);
+    DWT_Init();
 
-  // starts OC channel
-  HAL_TIM_OC_Start(&htim8, TIM_CHANNEL_4);
+    __HAL_TIM_SET_COMPARE(&htim1, MOTOR_LEFT_FORWARD_CHANNEL, 999);
+    __HAL_TIM_SET_COMPARE(&htim1, MOTOR_RIGHT_FORWARD_CHANNEL, 999);
+    __HAL_TIM_SET_COMPARE(&htim1, MOTOR_LEFT_BACKWARD_CHANNEL, 0);
+    __HAL_TIM_SET_COMPARE(&htim1, MOTOR_RIGHT_BACKWARD_CHANNEL, 0);
 
-  // starts pwm write sequence
-  HAL_TIM_DMABurst_WriteStart(&htim8, TIM_DMABASE_CCR1, TIM_DMA_CC4,
-                              (uint32_t *)ir_sequence,
-                              TIM_DMABURSTLENGTH_3TRANSFERS);
+    osKernelInitialize();
+    
+    osKernelStart();
 
-  // starts the master 1000 Hz timer
-  HAL_TIM_PWM_Start(&htim4, TIM_CHANNEL_4);
-  HAL_TIM_Base_Start(&htim4);
-
-  HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
-  HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_2);
-  HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_3);
-  HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_4);
-
-  HAL_StatusTypeDef encL = HAL_TIM_Encoder_Start(&htim2, TIM_CHANNEL_ALL);
-  HAL_StatusTypeDef encR = HAL_TIM_Encoder_Start(&htim3, TIM_CHANNEL_ALL);
-
-
-  __HAL_TIM_SET_COMPARE(&htim1, MOTOR_LEFT_FORWARD_CHANNEL, 999);
-  __HAL_TIM_SET_COMPARE(&htim1, MOTOR_RIGHT_FORWARD_CHANNEL, 999);
-  __HAL_TIM_SET_COMPARE(&htim1, MOTOR_LEFT_BACKWARD_CHANNEL, 0);
-  __HAL_TIM_SET_COMPARE(&htim1, MOTOR_RIGHT_BACKWARD_CHANNEL, 0);
-  /* Init scheduler */
-  osKernelInitialize(); /* Call init function for freertos objects (in cmsis_os2.c) */
-  /* Start scheduler */
-  osKernelStart();
-  while (1)
-  {
-  }
+    while (1) {}
 }
