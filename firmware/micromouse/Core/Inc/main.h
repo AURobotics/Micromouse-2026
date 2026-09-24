@@ -83,30 +83,28 @@ void Error_Handler(void);
 #define BNO_SCL_GPIO_Port GPIOB
 #define BTN_3_Pin GPIO_PIN_12
 #define BTN_3_GPIO_Port GPIOB
-#define BTN_2_Pin GPIO_PIN_13
-#define BTN_2_GPIO_Port GPIOB
-#define BTN_1_Pin GPIO_PIN_14
+#define BTN_1_Pin GPIO_PIN_13
 #define BTN_1_GPIO_Port GPIOB
+#define BTN_2_Pin GPIO_PIN_14
+#define BTN_2_GPIO_Port GPIOB
 #define SIDE_TRIG_Pin GPIO_PIN_6
 #define SIDE_TRIG_GPIO_Port GPIOC
 #define DIAGONAL_TRIG_Pin GPIO_PIN_7
 #define DIAGONAL_TRIG_GPIO_Port GPIOC
 #define FRONT_TRIG_Pin GPIO_PIN_8
 #define FRONT_TRIG_GPIO_Port GPIOC
-#define BLE_TX_Pin GPIO_PIN_10
-#define BLE_TX_GPIO_Port GPIOC
-#define BLE_RX_Pin GPIO_PIN_11
-#define BLE_RX_GPIO_Port GPIOC
+#define LED_1_Pin GPIO_PIN_15
+#define LED_1_GPIO_Port GPIOA
+#define LED_2_Pin GPIO_PIN_10
+#define LED_2_GPIO_Port GPIOC
 #define BNO_SDA_Pin GPIO_PIN_12
 #define BNO_SDA_GPIO_Port GPIOC
 #define BNO_INT_Pin GPIO_PIN_2
 #define BNO_INT_GPIO_Port GPIOD
-#define LED_3_Pin GPIO_PIN_3
-#define LED_3_GPIO_Port GPIOB
-#define LED_2_Pin GPIO_PIN_4
-#define LED_2_GPIO_Port GPIOB
-#define LED_1_Pin GPIO_PIN_5
-#define LED_1_GPIO_Port GPIOB
+#define BLE_TX_Pin GPIO_PIN_6
+#define BLE_TX_GPIO_Port GPIOB
+#define BLE_RX_Pin GPIO_PIN_7
+#define BLE_RX_GPIO_Port GPIOB
 
 /* USER CODE BEGIN Private defines */
 

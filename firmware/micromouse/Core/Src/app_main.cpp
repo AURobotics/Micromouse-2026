@@ -952,38 +952,38 @@ void StartDefaultTask_run(void *arg)
 void bnoTask_run(void *arg)
 {
   TickType_t last = xTaskGetTickCount();
-  bno.init();
+  // bno.init();
   double prevRawYaw = 0;
   double yawJumpThresh = 100; // TODO
-  if (loadBnoCalibration(bno))
-    printf("BNO offsets loaded :)\n");
-  else
-    printf("no BNO offsets to load\n");
+  // if (loadBnoCalibration(bno))
+  //   printf("BNO offsets loaded :)\n");
+  // else
+  //   printf("no BNO offsets to load\n");
 
   for (;;)
   {
     vTaskDelayUntil(&last, pdMS_TO_TICKS(10));
-    if (calibrateBNO)
-    {
-      calibrateBnoAndSave(bno);
-      calibrateBNO = false;
-    }
-    else
-    {
-      vec_3 v = bno.euler();
-      vec_3 u = bno.gyro();
-      double rawYaw = v.x();
+    // if (calibrateBNO)
+    // {
+    //   calibrateBnoAndSave(bno);
+    //   calibrateBNO = false;
+    // }
+    // else
+    // {
+    //   vec_3 v = bno.euler();
+    //   vec_3 u = bno.gyro();
+    //   double rawYaw = v.x();
 
-      if (fabs(angleDiff(prevRawYaw, rawYaw)) > yawJumpThresh)
-      {
-        yawOffset += angleDiff(rawYaw, prevRawYaw);
-        printf("-------------------------------------BNO jump detected, discrepancy=%f, new offset=%f", angleDiff(prevRawYaw, rawYaw), yawOffset);
-      }
-      prevRawYaw = rawYaw;
-      euler = v;
-      euler.vec[0] += yawOffset;
-      gyro = u;
-    }
+    //   if (fabs(angleDiff(prevRawYaw, rawYaw)) > yawJumpThresh)
+    //   {
+    //     yawOffset += angleDiff(rawYaw, prevRawYaw);
+    //     // printf("-------------------------------------BNO jump detected, discrepancy=%f, new offset=%f", angleDiff(prevRawYaw, rawYaw), yawOffset);
+    //   }
+    //   prevRawYaw = rawYaw;
+    //   euler = v;
+    //   euler.vec[0] += yawOffset;
+    //   gyro = u;
+    // }
   }
 }
 
@@ -992,7 +992,7 @@ void motionTask_run(void *arg)
   // TODO: this will only update ir_readings and the encoder position
   //  so we wont need the getPosition() function from pharos
   //  momken yeb2a feeh wa2t negarab iir?
-  TickType_t last = xTaskGetTickCount();
+  // TickType_t last = xTaskGetTickCount();
 
   // iir filter
   // ButterworthIIR ir_iir[6];
@@ -1008,56 +1008,70 @@ void motionTask_run(void *arg)
   // velL.reset();
   // velR.reset();
 
-  EncoderCount_t countL = (EncoderCount_t)__HAL_TIM_GET_COUNTER(&ENCODER_LEFT_TIM);
-  EncoderCount_t countR = (EncoderCount_t)__HAL_TIM_GET_COUNTER(&ENCODER_RIGHT_TIM);
-  EncoderCount_t lastCountL = countL;
-  EncoderCount_t lastCountR = countR;
+  // EncoderCount_t countL = (EncoderCount_t)__HAL_TIM_GET_COUNTER(&ENCODER_LEFT_TIM);
+  // EncoderCount_t countR = (EncoderCount_t)__HAL_TIM_GET_COUNTER(&ENCODER_RIGHT_TIM);
+  // EncoderCount_t lastCountL = countL;
+  // EncoderCount_t lastCountR = countR;
 
-  loadIRCalFromEEPROM(&hi2c1);
+  // loadIRCalFromEEPROM(&hi2c1);
   for (;;)
   {
     ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
     ////////////////////////////IRS//////////////////////
-    for (int i = 0; i < 6; i += 2)
-    {
-      ir_readings[i] = adc_dma_buffer[i / 2] & 0xFFFF;
-      ir_readings[i + 1] = (adc_dma_buffer[i / 2] >> 16) & 0xFFFF;
+    //   for (int i = 0; i < 6; i += 2)
+    //   {
+    //     ir_readings[i] = adc_dma_buffer[i / 2] & 0xFFFF;
+    //     ir_readings[i + 1] = (adc_dma_buffer[i / 2] >> 16) & 0xFFFF;
 
-      // iir filter
-      // ir_readings[i] = ir_iir[i].filter(ir_readings[i]);
-      // ir_readings[i + 1] = ir_iir[i + 1].filter(ir_readings[i + 1]);
-    }
+    //     // iir filter
+    //     // ir_readings[i] = ir_iir[i].filter(ir_readings[i]);
+    //     // ir_readings[i + 1] = ir_iir[i + 1].filter(ir_readings[i + 1]);
+    //   }
 
-    ///////////////////////ENCODERS/////////////////////
-    // overflow logic for 16bit timer tim3
-    uint16_t raw_R = __HAL_TIM_GET_COUNTER(&ENCODER_RIGHT_TIM);
-    int32_t deltaR = (int16_t)(raw_R - lastCountR);
-    countR += deltaR;
+    //   ///////////////////////ENCODERS/////////////////////
+    //   // overflow logic for 16bit timer tim3
+    //   uint16_t raw_R = __HAL_TIM_GET_COUNTER(&ENCODER_RIGHT_TIM);
+    //   int32_t deltaR = (int16_t)(raw_R - lastCountR);
+    //   countR += deltaR;
 
-    countL = (EncoderCount_t)__HAL_TIM_GET_COUNTER(&ENCODER_LEFT_TIM);
-    int32_t deltaL = (int32_t)(EncoderCount_t)(countL - lastCountL);
+    //   countL = (EncoderCount_t)__HAL_TIM_GET_COUNTER(&ENCODER_LEFT_TIM);
+    //   int32_t deltaL = (int32_t)(EncoderCount_t)(countL - lastCountL);
 
-    float rawVelL = (deltaL * m_per_tick) / ENCODER_TASK_DT_S;
-    float rawVelR = (deltaR * m_per_tick) / ENCODER_TASK_DT_S;
+    //   float rawVelL = (deltaL * m_per_tick) / ENCODER_TASK_DT_S;
+    //   float rawVelR = (deltaR * m_per_tick) / ENCODER_TASK_DT_S;
 
-    lastCountL = countL;
-    lastCountR = raw_R;
+    //   lastCountL = countL;
+    //   lastCountR = raw_R;
 
-    // TODO: et2akedy men dool
-    float distance_center = ((deltaL * m_per_tick) + (deltaR * m_per_tick)) / 2.0f;
+    //   // TODO: et2akedy men dool
+    //   float distance_center = ((deltaL * m_per_tick) + (deltaR * m_per_tick)) / 2.0f;
 
-    // update global
-    // 2 critical blocks 3ashan mesh taba3 ba3d w law 3ayez ye3mel interrupt mabenhom no problem
-    taskENTER_CRITICAL();
-    position.theta = euler.x();
-    position.x += distance_center * cos(position.theta * M_PI / 180.0f);
-    position.y += distance_center * sin(position.theta * M_PI / 180.0f);
-    taskEXIT_CRITICAL();
+    //   // printf("leftCount=%d, right_count=%d",countL,countR);
+    //   if(countL>0)
+    //   {
+    //     HAL_GPIO_WritePin(GPIOA,GPIO_PIN_10,GPIO_PIN_SET);
+    //   }
+    //   else
+    //     HAL_GPIO_WritePin(GPIOA,GPIO_PIN_10,GPIO_PIN_RESET);
 
-    taskENTER_CRITICAL();
-    curr_left_velocity = rawVelL;
-    curr_right_velocity = rawVelR;
-    taskEXIT_CRITICAL();
+    //     if(countR>0)
+    //   {
+    //     HAL_GPIO_WritePin(GPIOA,GPIO_PIN_15,GPIO_PIN_SET);
+    //   }
+    //   else
+    //     HAL_GPIO_WritePin(GPIOA,GPIO_PIN_15,GPIO_PIN_RESET);
+    //   // update global
+    //   // 2 critical blocks 3ashan mesh taba3 ba3d w law 3ayez ye3mel interrupt mabenhom no problem
+    //   taskENTER_CRITICAL();
+    //   position.theta = euler.x();
+    //   position.x += distance_center * cos(position.theta * M_PI / 180.0f);
+    //   position.y += distance_center * sin(position.theta * M_PI / 180.0f);
+    //   taskEXIT_CRITICAL();
+
+    //   taskENTER_CRITICAL();
+    //   curr_left_velocity = rawVelL;
+    //   curr_right_velocity = rawVelR;
+    //   taskEXIT_CRITICAL();
   }
 }
 
@@ -1069,33 +1083,26 @@ void controlTask_run(void *arg)
 
   for (;;)
   {
-    for (int i = 0; i < 4; i++)
-    {
-      moveF(1);
-      vTaskDelay(pdMS_TO_TICKS(500));
-      turn(90);
-      vTaskDelay(pdMS_TO_TICKS(500));
-    }
+    // vTaskDelayUntil(&last, pdMS_TO_TICKS(5));
+    // HAL_GPIO_WritePin(GPIOC,GPIO_PIN_10,GPIO_PIN_SET);
+    // vTaskDelay(pdMS_TO_TICKS(1000));
+    // HAL_GPIO_WritePin(GPIOC,GPIO_PIN_10,GPIO_PIN_RESET);
+    // vTaskDelay(pdMS_TO_TICKS(1000));
 
-    vTaskDelay(pdMS_TO_TICKS(3000));
+    // set_motor_speeds(100,100);
+    // flood();
+    // // ir_readings[i + 1] = ir_iir[i + 1].filter(ir_readings[i + 1]);
+    // printf("done flood \n");
+    // previous_run = current_run;
+    // exploreToCenter();
+    // printf("done exploretocenter\n");
+    // current_run = dis[16][1];
+    // // if (current_run != 0 && current_run == previous_run) break;
+    // flood(0);
+    // printf("done flood to begin\n");
+    // exploreToStart();
+    // printf("done exploretostart\n");
   }
-  // for (;;)
-  // {
-  //   vTaskDelayUntil(&last, pdMS_TO_TICKS(5));
-
-  //   flood();
-  //   // ir_readings[i + 1] = ir_iir[i + 1].filter(ir_readings[i + 1]);
-  //   printf("done flood \n");
-  //   previous_run = current_run;
-  //   exploreToCenter();
-  //   printf("done exploretocenter\n");
-  //   current_run = dis[16][1];
-  //   // if (current_run != 0 && current_run == previous_run) break;
-  //   flood(0);
-  //   printf("done flood to begin\n");
-  //   exploreToStart();
-  //   printf("done exploretostart\n");
-  // }
 }
 
 void algorithmTask_run(void *arg)
@@ -1112,56 +1119,56 @@ void HMIConfigTask_run(void *arg)
   for (;;)
   {
     ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
-    if (calibrateIR)
-    {
-      set_motor_speeds(0, 0);
-      vTaskSuspend((TaskHandle_t)ControlTaskHandle);
+    //   if (calibrateIR)
+    //   {
+    //     set_motor_speeds(0, 0);
+    //     vTaskSuspend((TaskHandle_t)ControlTaskHandle);
 
-      // waits for second press
-      IRCalibration();
-      if (saveIRCalToEEPROM(&hi2c1, (int16_t *)ir_thresh))
-        printf("IRcalibration done and saved to eeprom\n");
-      else
-        printf("failed to save IRcalibration to eeprom\n");
-      calibrateIR = false;
+    //     // waits for second press
+    //     IRCalibration();
+    //     if (saveIRCalToEEPROM(&hi2c1, (int16_t *)ir_thresh))
+    //       printf("IRcalibration done and saved to eeprom\n");
+    //     else
+    //       printf("failed to save IRcalibration to eeprom\n");
+    //     calibrateIR = false;
 
-      vTaskResume((TaskHandle_t)ControlTaskHandle);
-    }
+    //     vTaskResume((TaskHandle_t)ControlTaskHandle);
+    //   }
 
-    if (toggleRequested)
-    {
-      toggleRequested = false;
+    //   if (toggleRequested)
+    //   {
+    //     toggleRequested = false;
 
-      if (robotState == ROBOT_RUNNING)
-      {
-        // first press: STOP+RESET
-        vTaskSuspend((TaskHandle_t)MotionTaskHandle);
-        osThreadTerminate(ControlTaskHandle);
+    //     if (robotState == ROBOT_RUNNING)
+    //     {
+    //       // first press: STOP+RESET
+    //       vTaskSuspend((TaskHandle_t)MotionTaskHandle);
+    //       osThreadTerminate(ControlTaskHandle);
 
-        taskENTER_CRITICAL();
-        position = {0, 0, 0};
-        yawOffset = 0;
-        curr_r = 16;
-        curr_c = 1;
-        curr_dir = 0;
-        motionSuccessful = 1;
-        flooded = 0;
-        initialise(r_q, 300);
-        initialise(c_q, 300);
-        taskEXIT_CRITICAL();
+    //       taskENTER_CRITICAL();
+    //       position = {0, 0, 0};
+    //       yawOffset = 0;
+    //       curr_r = 16;
+    //       curr_c = 1;
+    //       curr_dir = 0;
+    //       motionSuccessful = 1;
+    //       flooded = 0;
+    //       initialise(r_q, 300);
+    //       initialise(c_q, 300);
+    //       taskEXIT_CRITICAL();
 
-        robotState = ROBOT_STOPPED;
-        printf("Robot stopped and reset\n");
-      }
-      else
-      {
-        // second press: START
-        ControlTaskHandle = osThreadNew(controlTask, NULL, &ControlTask_attributes);
-        vTaskResume((TaskHandle_t)MotionTaskHandle);
-        robotState = ROBOT_RUNNING;
-        printf("Robot started\n");
-      }
-    }
+    //       robotState = ROBOT_STOPPED;
+    //       printf("Robot stopped and reset\n");
+    //     }
+    //     else
+    //     {
+    //       // second press: START
+    //       ControlTaskHandle = osThreadNew(controlTask, NULL, &ControlTask_attributes);
+    //       vTaskResume((TaskHandle_t)MotionTaskHandle);
+    //       robotState = ROBOT_RUNNING;
+    //       printf("Robot started\n");
+    //     }
+    //   }
   }
 }
 
@@ -1197,6 +1204,7 @@ void app_main()
   HAL_TIM_PWM_Start(&htim4, TIM_CHANNEL_4);
   HAL_TIM_Base_Start(&htim4);
 
+  
   /* Init scheduler */
   osKernelInitialize(); /* Call init function for freertos objects (in cmsis_os2.c) */
   /* Start scheduler */
