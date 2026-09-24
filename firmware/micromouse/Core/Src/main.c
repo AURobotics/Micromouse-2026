@@ -111,13 +111,7 @@ int main(void)
   MX_ADC2_Init();
   MX_TIM5_Init();
   /* USER CODE BEGIN 2 */
-  while (1)
-  {
-    HAL_GPIO_WritePin(GPIOC, GPIO_PIN_10, GPIO_PIN_SET);
-    HAL_Delay(500);
-    HAL_GPIO_WritePin(GPIOC, GPIO_PIN_10, GPIO_PIN_RESET);
-    HAL_Delay(500);
-  }
+  
   /* USER CODE END 2 */
 
   /* Init scheduler */
@@ -131,12 +125,7 @@ int main(void)
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
-  while (1)
-  {
-    /* USER CODE END WHILE */
-
-    /* USER CODE BEGIN 3 */
-  }
+  app_main();
   /* USER CODE END 3 */
 }
 

@@ -992,7 +992,7 @@ void motionTask_run(void *arg)
   // TODO: this will only update ir_readings and the encoder position
   //  so we wont need the getPosition() function from pharos
   //  momken yeb2a feeh wa2t negarab iir?
-  // TickType_t last = xTaskGetTickCount();
+  TickType_t last = xTaskGetTickCount();
 
   // iir filter
   // ButterworthIIR ir_iir[6];
@@ -1008,60 +1008,64 @@ void motionTask_run(void *arg)
   // velL.reset();
   // velR.reset();
 
-  // EncoderCount_t countL = (EncoderCount_t)__HAL_TIM_GET_COUNTER(&ENCODER_LEFT_TIM);
-  // EncoderCount_t countR = (EncoderCount_t)__HAL_TIM_GET_COUNTER(&ENCODER_RIGHT_TIM);
-  // EncoderCount_t lastCountL = countL;
-  // EncoderCount_t lastCountR = countR;
+  EncoderCount_t countL = (EncoderCount_t)__HAL_TIM_GET_COUNTER(&ENCODER_LEFT_TIM);
+  EncoderCount_t countR = (EncoderCount_t)__HAL_TIM_GET_COUNTER(&ENCODER_RIGHT_TIM);
+  EncoderCount_t lastCountL = countL;
+  EncoderCount_t lastCountR = countR;
 
   // loadIRCalFromEEPROM(&hi2c1);
   for (;;)
   {
-    ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+    vTaskDelayUntil(&last, pdMS_TO_TICKS(5));
     ////////////////////////////IRS//////////////////////
-    //   for (int i = 0; i < 6; i += 2)
-    //   {
-    //     ir_readings[i] = adc_dma_buffer[i / 2] & 0xFFFF;
-    //     ir_readings[i + 1] = (adc_dma_buffer[i / 2] >> 16) & 0xFFFF;
+    // for (int i = 0; i < 6; i += 2)
+    // {
+    //   ir_readings[i] = adc_dma_buffer[i / 2] & 0xFFFF;
+    //   ir_readings[i + 1] = (adc_dma_buffer[i / 2] >> 16) & 0xFFFF;
 
-    //     // iir filter
-    //     // ir_readings[i] = ir_iir[i].filter(ir_readings[i]);
-    //     // ir_readings[i + 1] = ir_iir[i + 1].filter(ir_readings[i + 1]);
-    //   }
+    //   // iir filter
+    //   // ir_readings[i] = ir_iir[i].filter(ir_readings[i]);
+    //   // ir_readings[i + 1] = ir_iir[i + 1].filter(ir_readings[i + 1]);
+    // }
 
     //   ///////////////////////ENCODERS/////////////////////
     //   // overflow logic for 16bit timer tim3
-    //   uint16_t raw_R = __HAL_TIM_GET_COUNTER(&ENCODER_RIGHT_TIM);
-    //   int32_t deltaR = (int16_t)(raw_R - lastCountR);
-    //   countR += deltaR;
+    uint16_t raw_R = __HAL_TIM_GET_COUNTER(&ENCODER_RIGHT_TIM);
+    int32_t deltaR = (int16_t)(raw_R - lastCountR);
+    countR += deltaR;
 
-    //   countL = (EncoderCount_t)__HAL_TIM_GET_COUNTER(&ENCODER_LEFT_TIM);
-    //   int32_t deltaL = (int32_t)(EncoderCount_t)(countL - lastCountL);
+    countL = (EncoderCount_t)__HAL_TIM_GET_COUNTER(&ENCODER_LEFT_TIM);
+    int32_t deltaL = (int32_t)(EncoderCount_t)(countL - lastCountL);
 
-    //   float rawVelL = (deltaL * m_per_tick) / ENCODER_TASK_DT_S;
-    //   float rawVelR = (deltaR * m_per_tick) / ENCODER_TASK_DT_S;
+    float rawVelL = (deltaL * m_per_tick) / ENCODER_TASK_DT_S;
+    float rawVelR = (deltaR * m_per_tick) / ENCODER_TASK_DT_S;
 
-    //   lastCountL = countL;
-    //   lastCountR = raw_R;
+    lastCountL = countL;
+    lastCountR = raw_R;
+    if (raw_R & 0x01)
+      HAL_GPIO_WritePin(GPIOC, GPIO_PIN_10, GPIO_PIN_SET);
+    else
+      HAL_GPIO_WritePin(GPIOC, GPIO_PIN_10, GPIO_PIN_RESET);
+    // TODO: et2akedy men dool
+    float distance_center = ((deltaL * m_per_tick) + (deltaR * m_per_tick)) / 2.0f;
 
-    //   // TODO: et2akedy men dool
-    //   float distance_center = ((deltaL * m_per_tick) + (deltaR * m_per_tick)) / 2.0f;
+    // printf("leftCount=%d, right_count=%d",countL,countR);
+    // HAL_GPIO_WritePin(GPIOC,GPIO_PIN_10,GPIO_PIN_SET);
+    // if (countL > 0)
+    // {
+    //   HAL_GPIO_WritePin(GPIOC, GPIO_PIN_10, GPIO_PIN_SET);
+    // }
+    // else
+    //   HAL_GPIO_WritePin(GPIOC, GPIO_PIN_10, GPIO_PIN_RESET);
 
-    //   // printf("leftCount=%d, right_count=%d",countL,countR);
-    //   if(countL>0)
-    //   {
-    //     HAL_GPIO_WritePin(GPIOA,GPIO_PIN_10,GPIO_PIN_SET);
-    //   }
-    //   else
-    //     HAL_GPIO_WritePin(GPIOA,GPIO_PIN_10,GPIO_PIN_RESET);
-
-    //     if(countR>0)
-    //   {
-    //     HAL_GPIO_WritePin(GPIOA,GPIO_PIN_15,GPIO_PIN_SET);
-    //   }
-    //   else
-    //     HAL_GPIO_WritePin(GPIOA,GPIO_PIN_15,GPIO_PIN_RESET);
-    //   // update global
-    //   // 2 critical blocks 3ashan mesh taba3 ba3d w law 3ayez ye3mel interrupt mabenhom no problem
+    // if (countR > 0)
+    // {
+    //   HAL_GPIO_WritePin(GPIOC, GPIO_PIN_11, GPIO_PIN_SET);
+    // }
+    // else
+    //   HAL_GPIO_WritePin(GPIOC, GPIO_PIN_11, GPIO_PIN_RESET);
+    // //   // update global
+    // //   // 2 critical blocks 3ashan mesh taba3 ba3d w law 3ayez ye3mel interrupt mabenhom no problem
     //   taskENTER_CRITICAL();
     //   position.theta = euler.x();
     //   position.x += distance_center * cos(position.theta * M_PI / 180.0f);
@@ -1083,13 +1087,9 @@ void controlTask_run(void *arg)
 
   for (;;)
   {
-    // vTaskDelayUntil(&last, pdMS_TO_TICKS(5));
-    // HAL_GPIO_WritePin(GPIOC,GPIO_PIN_10,GPIO_PIN_SET);
-    // vTaskDelay(pdMS_TO_TICKS(1000));
-    // HAL_GPIO_WritePin(GPIOC,GPIO_PIN_10,GPIO_PIN_RESET);
-    // vTaskDelay(pdMS_TO_TICKS(1000));
+    vTaskDelayUntil(&last, pdMS_TO_TICKS(5));
 
-    // set_motor_speeds(100,100);
+    set_motor_speeds(100, 100);
     // flood();
     // // ir_readings[i + 1] = ir_iir[i + 1].filter(ir_readings[i + 1]);
     // printf("done flood \n");
@@ -1204,7 +1204,19 @@ void app_main()
   HAL_TIM_PWM_Start(&htim4, TIM_CHANNEL_4);
   HAL_TIM_Base_Start(&htim4);
 
-  
+  HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
+  HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_2);
+  HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_3);
+  HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_4);
+
+  HAL_StatusTypeDef encL = HAL_TIM_Encoder_Start(&htim2, TIM_CHANNEL_ALL);
+  HAL_StatusTypeDef encR = HAL_TIM_Encoder_Start(&htim3, TIM_CHANNEL_ALL);
+
+
+  __HAL_TIM_SET_COMPARE(&htim1, MOTOR_LEFT_FORWARD_CHANNEL, 999);
+  __HAL_TIM_SET_COMPARE(&htim1, MOTOR_RIGHT_FORWARD_CHANNEL, 999);
+  __HAL_TIM_SET_COMPARE(&htim1, MOTOR_LEFT_BACKWARD_CHANNEL, 0);
+  __HAL_TIM_SET_COMPARE(&htim1, MOTOR_RIGHT_BACKWARD_CHANNEL, 0);
   /* Init scheduler */
   osKernelInitialize(); /* Call init function for freertos objects (in cmsis_os2.c) */
   /* Start scheduler */
