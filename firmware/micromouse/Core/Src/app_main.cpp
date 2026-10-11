@@ -161,25 +161,25 @@ extern "C" void app_rtos_init(void)
 
 void motors(TIM_HandleTypeDef *htim, uint32_t channel_in1, uint32_t channel_in2, double speed)
 {
-    if (speed > 100.0)
-        speed = 100.0;
-    if (speed < -100.0)
-        speed = -100.0;
+  if (speed > 100.0)
+    speed = 100.0;
+  if (speed < -100.0)
+    speed = -100.0;
 
-    double pwm = (fabs(speed) / 100.0) * MOTOR_PWM_MAX_CCR;
-    if (pwm > MOTOR_PWM_MAX_CCR)
-        pwm = MOTOR_PWM_MAX_CCR;
+  double pwm = (fabs(speed) / 100.0) * MOTOR_PWM_MAX_CCR;
+  if (pwm > MOTOR_PWM_MAX_CCR)
+    pwm = MOTOR_PWM_MAX_CCR;
 
-    if (speed >= 0)
-    {
-        __HAL_TIM_SET_COMPARE(htim, channel_in1, (uint32_t)pwm);
-        __HAL_TIM_SET_COMPARE(htim, channel_in2, 0);
-    }
-    else
-    {
-        __HAL_TIM_SET_COMPARE(htim, channel_in1, 0);
-        __HAL_TIM_SET_COMPARE(htim, channel_in2, (uint32_t)pwm);
-    }
+  if (speed >= 0)
+  {
+    __HAL_TIM_SET_COMPARE(htim, channel_in1, (uint32_t)pwm);
+    __HAL_TIM_SET_COMPARE(htim, channel_in2, 0);
+  }
+  else
+  {
+    __HAL_TIM_SET_COMPARE(htim, channel_in1, 0);
+    __HAL_TIM_SET_COMPARE(htim, channel_in2, (uint32_t)pwm);
+  }
 }
 void motor_speeds(float left_speed, float right_speed)
 {
@@ -191,11 +191,11 @@ extern "C" void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef *hadc)
   if (hadc->Instance == ADC1)
   {
     // stop
-    HAL_TIM_Base_Stop(&htim2);
-    __HAL_TIM_SET_COUNTER(&htim2, 0);
-    __HAL_TIM_SetCompare(&htim2, 0, 1260);
-    HAL_TIM_GenerateEvent(&htim2, TIM_EVENTSOURCE_UPDATE);
-    __HAL_TIM_CLEAR_FLAG(&htim2, TIM_FLAG_UPDATE);
+    HAL_TIM_Base_Stop(&htim8);
+    __HAL_TIM_SET_COUNTER(&htim8, 0);
+    __HAL_TIM_SetCompare(&htim8, 0, 1260); // TODO: check this 1260?? check the function not sure if its correct
+    HAL_TIM_GenerateEvent(&htim8, TIM_EVENTSOURCE_UPDATE);
+    __HAL_TIM_CLEAR_FLAG(&htim8, TIM_FLAG_UPDATE);
   }
 }
 extern "C" void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
@@ -379,7 +379,7 @@ void bnoTask_run(void *arg)
   bno.init();
   double prevRawYaw = bno.euler().x();
   double yawOffset = 0;
-  double yawJumpThresh=60; // TODO: tune
+  double yawJumpThresh = 60; // TODO: tune
   if (loadBnoCalibration(bno))
     printf("loaded bnoCalibration successfully :)\n");
   else
@@ -539,7 +539,7 @@ void controlTask_run(void *arg)
   bool status_sent = false; // 3shan ne send status only once when motion is done
 
   Pose straight_start_pose;
-  float straight_target_dist = 0.18f;//cell in meters
+  float straight_target_dist = 0.18f; // cell in meters
 
   std::vector<Point> path_copy;
   uint32_t local_ver = 0;
@@ -747,7 +747,22 @@ void app_main()
 {
   // Write your C++ application code here
   // This acts as your new int main()
-  while (1)
-  {
-  }
+  HAL_TIM_PWM_Start(&htim8, TIM_CHANNEL_1);
+  HAL_TIM_PWM_Start(&htim8, TIM_CHANNEL_2);
+  HAL_TIM_PWM_Start(&htim8, TIM_CHANNEL_3);
+  HAL_TIM_PWM_Start(&htim8, TIM_CHANNEL_4);
+
+  // set the timer to be at ARR 3ashan lama tim4 ye trigger it yebda2 men zero
+  // probably wont matter if we set it at zero 3ady
+  TIM8->CNT = TIM8->ARR;
+  __HAL_TIM_CLEAR_FLAG(&htim8, TIM_FLAG_UPDATE | TIM_FLAG_CC4);
+
+  HAL_TIM_DMABurst_MultiWriteStart(&htim8, TIM_DMABASE_CCR1, TIM_DMA_CC4,
+                                   (const uint32_t *)ir_sequence,
+                                   TIM_DMABURSTLENGTH_3TRANSFERS, 9);
+
+  HAL_ADC_Start(&hadc2);
+  HAL_ADCEx_MultiModeStart_DMA(&hadc1, (uint32_t *)adc_dma_buffer, 3);
+
+  HAL_TIM_Base_Start(&htim4);
 }
