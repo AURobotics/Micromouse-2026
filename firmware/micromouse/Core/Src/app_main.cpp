@@ -27,7 +27,7 @@
  * mesh katbeen el tasks henak fy freertos.c 3ashan el global variables kolaha teb2a hena
  * w el tasks and stuff cpp
  */
-
+#define IR_PULSE_US 100u
 bool pausedAndReset = true; // started it as true 3ashan yebda2 el motors mesh sha8aleen and then start on pressing the button
 bool calibrateIR = false;
 bool calibrateBNO = false;
@@ -73,17 +73,16 @@ struct velocity
 
 volatile uint32_t adc_dma_buffer[3];
 uint16_t ir_sequence[9] = {
-    // TODO:check this
-    0, 1260, 0, // Pulse 1: Only Channel 2 is ON
-    0, 0, 1260, // Pulse 2: Only Channel 3 is ON
-    1260, 0, 0  // Pulse 3: Only Channel 1 is ON
+    IR_PULSE_US, 0, 0, /* SIDE     -> sub-slot 2 */
+    0, IR_PULSE_US, 0, /* DIAGONAL -> sub-slot 3 */
+    0, 0, IR_PULSE_US  /* FRONT    -> sub-slot 1 of the next cycle */
 };
 bool walls[3] = {false}; // front left right
 vec_3 euler;             // TODO:IMPORTANT CHECK THE UNITS OF EULER
 vec_3 gyro;
 uint16_t ir_readings[6] = {0}; // left_front, right_front, left,right,left_diag, right_diag
 // double ir_distance[6] = {1.0, 1.0, 1.0, 1.0, 1.0, 1.0}; // l7d ma el ir task ytktb  // in meters
-uint16_t ir_thresh[6];
+int16_t ir_thresh[6];
 // uint32_t calReadings[4][6];
 // uint16_t calDistances[6] = {2,4,6,8,10,14};
 struct Pose position = {0, 0, 0};
@@ -190,12 +189,24 @@ extern "C" void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef *hadc)
 {
   if (hadc->Instance == ADC1)
   {
-    // stop
-    HAL_TIM_Base_Stop(&htim8);
-    __HAL_TIM_SET_COUNTER(&htim8, 0);
-    __HAL_TIM_SetCompare(&htim8, 0, 1260); // TODO: check this 1260?? check the function not sure if its correct
-    HAL_TIM_GenerateEvent(&htim8, TIM_EVENTSOURCE_UPDATE);
-    __HAL_TIM_CLEAR_FLAG(&htim8, TIM_FLAG_UPDATE);
+    //stop timer and pause at ARR value 3ashan el LED tefdal off 
+    TIM8->CR1 &= ~TIM_CR1_CEN;
+    TIM8->CNT = TIM8->ARR;
+    
+    //dma 3ashan hwa circular fa maybe it goes out of sync fa this just makes sure that it gets back zy ma kan
+    DMA2_Stream7->CR &= ~DMA_SxCR_EN;
+    while (DMA2_Stream7->CR & DMA_SxCR_EN)
+    {
+    }
+    DMA2->HIFCR = DMA_HIFCR_CTCIF7 | DMA_HIFCR_CHTIF7 | DMA_HIFCR_CTEIF7 |
+                  DMA_HIFCR_CDMEIF7 | DMA_HIFCR_CFEIF7;
+    DMA2_Stream7->NDTR = 9;
+    DMA2_Stream7->M0AR = (uint32_t)ir_sequence;
+    DMA2_Stream7->CR |= DMA_SxCR_EN;
+
+    TIM8->CCR1 = 0;
+    TIM8->CCR2 = 0;
+    TIM8->CCR3 = IR_PULSE_US;
   }
 }
 extern "C" void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
@@ -344,30 +355,46 @@ bool loadIRCalFromEEPROM(I2C_HandleTypeDef *i2c)
 void StartDefaultTask_run(void *arg)
 {
   // im going to use this task for START/STOP button
+  TickType_t last = xTaskGetTickCount();
+  static uint8_t buf[40];
   for (;;)
   {
-    ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
 
-    vTaskDelay(pdMS_TO_TICKS(30)); // debounce: wait, then confirm still pressed
-    if (HAL_GPIO_ReadPin(BTN_STARTSTOP_GPIO_Port, BTN_STARTSTOP_Pin) != GPIO_PIN_RESET)
-      continue; // bounce, ignore
-
-    if (pausedAndReset)
+    vTaskDelayUntil(&last, pdMS_TO_TICKS(5));
+    for (int i = 0; i < 6; i += 2)
     {
-      pausedAndReset = false;
-      // TODO:start the run: signal algorithm task, or set motionType or whatever
-    }
-    else if (!pausedAndReset)
-    {
-      pausedAndReset = true;
-      // STOP motors
-      taskENTER_CRITICAL();
-      motionType = STOP;
-      taskEXIT_CRITICAL();
-      // TODO:reset position
+      ir_readings[i] = adc_dma_buffer[i / 2] & 0xFFFF;
+      ir_readings[i + 1] = (adc_dma_buffer[i / 2] >> 16) & 0xFFFF;
     }
 
-    vTaskDelay(pdMS_TO_TICKS(200));
+    int n = snprintf((char *)buf, sizeof buf, "%u %u %u %u %u %u  n=%lu\r\n",
+                     ir_readings[0], ir_readings[1], ir_readings[2],
+                     ir_readings[3], ir_readings[4], ir_readings[5],
+                     (unsigned long)DMA2_Stream7->NDTR);
+    HAL_UART_Transmit(&huart2, buf, n, 20);
+    osDelay(20);
+    // ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+
+    // vTaskDelay(pdMS_TO_TICKS(30)); // debounce: wait, then confirm still pressed
+    // if (HAL_GPIO_ReadPin(BTN_STARTSTOP_GPIO_Port, BTN_STARTSTOP_Pin) != GPIO_PIN_RESET)
+    //   continue; // bounce, ignore
+
+    // if (pausedAndReset)
+    // {
+    //   pausedAndReset = false;
+    //   // TODO:start the run: signal algorithm task, or set motionType or whatever
+    // }
+    // else if (!pausedAndReset)
+    // {
+    //   pausedAndReset = true;
+    //   // STOP motors
+    //   taskENTER_CRITICAL();
+    //   motionType = STOP;
+    //   taskEXIT_CRITICAL();
+    //   // TODO:reset position
+    // }
+
+    // vTaskDelay(pdMS_TO_TICKS(200));
   }
 }
 

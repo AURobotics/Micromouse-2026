@@ -106,7 +106,7 @@ int main(void)
   MX_ADC2_Init();
   MX_TIM5_Init();
   /* USER CODE BEGIN 2 */
-
+  app_main();
   /* USER CODE END 2 */
 
   /* Init scheduler */
