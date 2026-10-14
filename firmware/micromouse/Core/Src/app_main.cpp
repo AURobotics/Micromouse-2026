@@ -32,6 +32,8 @@ bool pausedAndReset = true; // started it as true 3ashan yebda2 el motors mesh s
 bool calibrateIR = false;
 bool calibrateBNO = false;
 uint32_t lastIrCalTick = 0;
+uint32_t lastBnoCalTick = 0;
+uint32_t lastStartStopTick = 0;
 typedef uint32_t EncoderCount_t; // adjust 3la 16 bit or 32 bit based on the encoder timer
 // tim2 and timer 5 -->32 bit
 // tim3 and timer 4 -->16 bit
@@ -189,24 +191,20 @@ extern "C" void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef *hadc)
 {
   if (hadc->Instance == ADC1)
   {
-    //stop timer and pause at ARR value 3ashan el LED tefdal off 
-    TIM8->CR1 &= ~TIM_CR1_CEN;
-    TIM8->CNT = TIM8->ARR;
-    
-    //dma 3ashan hwa circular fa maybe it goes out of sync fa this just makes sure that it gets back zy ma kan
+    __HAL_TIM_DISABLE(&htim8);                                       // stop ADC trigger and LED pulses
+    __HAL_TIM_SET_COUNTER(&htim8, __HAL_TIM_GET_AUTORELOAD(&htim8)); // next tick = update event
+
     DMA2_Stream7->CR &= ~DMA_SxCR_EN;
     while (DMA2_Stream7->CR & DMA_SxCR_EN)
     {
     }
-    DMA2->HIFCR = DMA_HIFCR_CTCIF7 | DMA_HIFCR_CHTIF7 | DMA_HIFCR_CTEIF7 |
-                  DMA_HIFCR_CDMEIF7 | DMA_HIFCR_CFEIF7;
+    DMA2->HIFCR = DMA_HIFCR_CTCIF7 | DMA_HIFCR_CHTIF7;
     DMA2_Stream7->NDTR = 9;
-    DMA2_Stream7->M0AR = (uint32_t)ir_sequence;
     DMA2_Stream7->CR |= DMA_SxCR_EN;
 
-    TIM8->CCR1 = 0;
-    TIM8->CCR2 = 0;
-    TIM8->CCR3 = IR_PULSE_US;
+    __HAL_TIM_SET_COMPARE(&htim8, TIM_CHANNEL_1, 0);
+    __HAL_TIM_SET_COMPARE(&htim8, TIM_CHANNEL_2, 0);
+    __HAL_TIM_SET_COMPARE(&htim8, TIM_CHANNEL_3, IR_PULSE_US);
   }
 }
 extern "C" void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
@@ -214,13 +212,18 @@ extern "C" void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
   BaseType_t xHigherPriorityTaskWoken = pdFALSE;
   if (GPIO_Pin == BTN_STARTSTOP_Pin)
   {
-    vTaskNotifyGiveFromISR((TaskHandle_t)defaultTaskHandle, &xHigherPriorityTaskWoken);
+    uint32_t now = millis();
+    if (now - lastStartStopTick > 200)
+    {
+      lastStartStopTick = now;
+      vTaskNotifyGiveFromISR((TaskHandle_t)defaultTaskHandle, &xHigherPriorityTaskWoken);
+    }
   }
   else if (GPIO_Pin == BTN_IRCAL_PIN)
   {
     uint32_t now = millis();
     if (now - lastIrCalTick > 200)
-    { // 200ms debounce
+    {
       lastIrCalTick = now;
       calibrateIR = true;
       vTaskNotifyGiveFromISR((TaskHandle_t)HMITaskHandle, &xHigherPriorityTaskWoken);
@@ -228,8 +231,13 @@ extern "C" void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
   }
   else if (GPIO_Pin == BTN_BNOCAL_PIN)
   {
-    calibrateBNO = true;
-    vTaskNotifyGiveFromISR((TaskHandle_t)BnoTaskHandle, &xHigherPriorityTaskWoken);
+    uint32_t now = HAL_GetTick();
+    if (now - lastBnoCalTick > 200)
+    {
+      lastBnoCalTick = now;
+      calibrateBNO = true;
+      vTaskNotifyGiveFromISR((TaskHandle_t)BnoTaskHandle, &xHigherPriorityTaskWoken);
+    }
   }
   portYIELD_FROM_ISR(xHigherPriorityTaskWoken);
 }
@@ -351,6 +359,7 @@ bool loadIRCalFromEEPROM(I2C_HandleTypeDef *i2c)
   printf("\r\n");
   return true;
 }
+
 ////////////////////////////////////////////////TASKS////////////////////////////////////////////////////
 void StartDefaultTask_run(void *arg)
 {
@@ -359,42 +368,50 @@ void StartDefaultTask_run(void *arg)
   static uint8_t buf[40];
   for (;;)
   {
+    ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
 
-    vTaskDelayUntil(&last, pdMS_TO_TICKS(5));
-    for (int i = 0; i < 6; i += 2)
+    // vTaskDelayUntil(&last, pdMS_TO_TICKS(2000));
+    // motor_speeds(-100, -100);
+    // vTaskDelayUntil(&last, pdMS_TO_TICKS(2000));
+    // motor_speeds(100, 100);
+    // vTaskDelayUntil(&last, pdMS_TO_TICKS(5));
+    // for (int i = 0; i < 6; i += 2)
+    // {
+    //   ir_readings[i] = adc_dma_buffer[i / 2] & 0xFFFF;
+    //   ir_readings[i + 1] = (adc_dma_buffer[i / 2] >> 16) & 0xFFFF;
+    // }
+
+    // int n = snprintf((char *)buf, sizeof buf, "%u %u %u %u %u %u \r\n",
+    //                  ir_readings[0], ir_readings[1], ir_readings[2],
+    //                  ir_readings[3], ir_readings[4], ir_readings[5]);
+    // HAL_UART_Transmit(&huart2, buf, n, 20);
+    // osDelay(20);
+    // ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+    // int n = snprintf((char *)buf, sizeof buf, "bro\r\n");
+    // HAL_UART_Transmit(&huart2, buf, n, 20);
+
+    if (pausedAndReset)
     {
-      ir_readings[i] = adc_dma_buffer[i / 2] & 0xFFFF;
-      ir_readings[i + 1] = (adc_dma_buffer[i / 2] >> 16) & 0xFFFF;
+      pausedAndReset = false;
+      int n = snprintf((char *)buf, sizeof buf, "START\r\n");
+      HAL_UART_Transmit(&huart2, buf, n, 20);
+      motor_speeds(100, 100);
+      // TODO:start the run: signal algorithm task, or set motionType or whatever
+    }
+    else if (!pausedAndReset)
+    {
+      pausedAndReset = true;
+      // STOP motors
+      int n = snprintf((char *)buf, sizeof buf, "STOP\r\n");
+      HAL_UART_Transmit(&huart2, buf, n, 20);
+      motor_speeds(0, 0);
+      taskENTER_CRITICAL();
+      motionType = STOP;
+      taskEXIT_CRITICAL();
+      // TODO:reset position
     }
 
-    int n = snprintf((char *)buf, sizeof buf, "%u %u %u %u %u %u  n=%lu\r\n",
-                     ir_readings[0], ir_readings[1], ir_readings[2],
-                     ir_readings[3], ir_readings[4], ir_readings[5],
-                     (unsigned long)DMA2_Stream7->NDTR);
-    HAL_UART_Transmit(&huart2, buf, n, 20);
-    osDelay(20);
-    // ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
-
-    // vTaskDelay(pdMS_TO_TICKS(30)); // debounce: wait, then confirm still pressed
-    // if (HAL_GPIO_ReadPin(BTN_STARTSTOP_GPIO_Port, BTN_STARTSTOP_Pin) != GPIO_PIN_RESET)
-    //   continue; // bounce, ignore
-
-    // if (pausedAndReset)
-    // {
-    //   pausedAndReset = false;
-    //   // TODO:start the run: signal algorithm task, or set motionType or whatever
-    // }
-    // else if (!pausedAndReset)
-    // {
-    //   pausedAndReset = true;
-    //   // STOP motors
-    //   taskENTER_CRITICAL();
-    //   motionType = STOP;
-    //   taskEXIT_CRITICAL();
-    //   // TODO:reset position
-    // }
-
-    // vTaskDelay(pdMS_TO_TICKS(200));
+    vTaskDelay(pdMS_TO_TICKS(200));
   }
 }
 
@@ -402,33 +419,39 @@ void bnoTask_run(void *arg)
 {
   TickType_t last = xTaskGetTickCount();
 
-  imu bno(&hi2c2, 0x28); // TODO: check the address
+  imu bno(&hi2c2, 0x29); // TODO: check the address
+  static uint8_t buf[64];
+  int n;
   bno.init();
+
   double prevRawYaw = bno.euler().x();
   double yawOffset = 0;
   double yawJumpThresh = 60; // TODO: tune
-  if (loadBnoCalibration(bno))
-    printf("loaded bnoCalibration successfully :)\n");
-  else
-    printf("no bnoCalibration data to load\n");
+  // if (loadBnoCalibration(bno))
+  //   printf("loaded bnoCalibration successfully :)\n");
+  // else
+  //   printf("no bnoCalibration data to load\n");
 
   for (;;)
   {
-    vTaskDelayUntil(&last, pdMS_TO_TICKS(10));
+    vTaskDelayUntil(&last, pdMS_TO_TICKS(100));
+    // int n = snprintf((char *)buf, sizeof buf, "here\r\n");
+    // HAL_UART_Transmit(&huart2, buf, n, 20);
     if (calibrateBNO)
     {
-      calibrateBnoAndSave(bno);
+      // calibrateBnoAndSave(bno);
       calibrateBNO = false;
+      int n = snprintf((char *)buf, sizeof buf, "calibrate bno!\r\n");
+      HAL_UART_Transmit(&huart2, buf, n, 20);
     }
     else
     {
       vec_3 v = bno.euler();
       vec_3 g = bno.gyro();
-
       if (fabs(angleDiff(prevRawYaw, v.x())) > yawJumpThresh)
       {
         yawOffset += angleDiff(v.x(), prevRawYaw);
-        printf("-------------------------------------BNO jump detected, discrepancy=%f, newOffset=%f", angleDiff(prevRawYaw, v.x()), yawOffset);
+        // printf("-------------------------------------BNO jump detected, discrepancy=%f, newOffset=%f", angleDiff(prevRawYaw, v.x()), yawOffset);
       }
       prevRawYaw = v.x();
       taskENTER_CRITICAL();
@@ -459,27 +482,40 @@ void motionTask_run(void *arg)
   EncoderCount_t countL = (EncoderCount_t)__HAL_TIM_GET_COUNTER(&ENCODER_LEFT_TIM);
   EncoderCount_t countR = (EncoderCount_t)__HAL_TIM_GET_COUNTER(&ENCODER_RIGHT_TIM);
   EncoderCount_t lastCountL = countL;
-  EncoderCount_t lastCountR = countR;
+  EncoderCount_t /* Infinite loop */ lastCountR = countR;
   MotionType lastMotionTypeMotion = STOP;
   uint32_t last_cmd_id = 0; // b3rad el command id 3ashan ne know law command gdeda w nreset el controllers
   uint32_t ir_margin = 100; // TODO 3ashan benakhod el reading w hwa odam el 7eeta belzabt bas 3ayzeen nedeeh headroom
 
-  if (loadIRCalFromEEPROM(&hi2c1))
-    printf("loaded IR calibration\n");
-  else
-    printf("no IR calibration in EEPROM\n");
+  // if (loadIRCalFromEEPROM(&hi2c1))
+  //   printf("loaded IR calibration\n");
+  // else
+  //   printf("no IR calibration in EEPROM\n");
 
+  static uint8_t buf[64];
+  int n;
   for (;;)
   {
+    vTaskDelayUntil(&last, pdMS_TO_TICKS(5));
     vTaskDelayUntil(&last, pdMS_TO_TICKS(5));
     for (int i = 0; i < 6; i += 2)
     {
       ir_readings[i] = adc_dma_buffer[i / 2] & 0xFFFF;
       ir_readings[i + 1] = (adc_dma_buffer[i / 2] >> 16) & 0xFFFF;
     }
-    walls[0] = (ir_readings[0] > ir_thresh[0] - ir_margin) || (ir_readings[1] > ir_thresh[1] - ir_margin);
-    walls[1] = ir_readings[2] > ir_thresh[2] - ir_margin;
-    walls[2] = ir_readings[3] > ir_thresh[3] - ir_margin;
+
+    int n = snprintf((char *)buf, sizeof buf, "%u %u %u %u %u %u \r\n",
+                     ir_readings[0], ir_readings[1], ir_readings[2],
+                     ir_readings[3], ir_readings[4], ir_readings[5]);
+    HAL_UART_Transmit(&huart2, buf, n, 20);
+    // for (int i = 0; i < 6; i += 2)
+    // {
+    //   ir_readings[i] = adc_dma_buffer[i / 2] & 0xFFFF;
+    //   ir_readings[i + 1] = (adc_dma_buffer[i / 2] >> 16) & 0xFFFF;
+    // }
+    // walls[0] = (ir_readings[0] > ir_thresh[0] - ir_margin) || (ir_readings[1] > ir_thresh[1] - ir_margin);
+    // walls[1] = ir_readings[2] > ir_thresh[2] - ir_margin;
+    // walls[2] = ir_readings[3] > ir_thresh[3] - ir_margin;
     // raw counts
     // overflow logic for tim3 16bit
     uint16_t raw_R = __HAL_TIM_GET_COUNTER(&ENCODER_RIGHT_TIM);
@@ -492,62 +528,71 @@ void motionTask_run(void *arg)
     lastCountL = countL;
     lastCountR = raw_R;
 
-    // --- counts -> distance (m) -> raw velocity (m/s) ---
-    float rawVelL = (deltaL * m_per_tick) / ENCODER_TASK_DT_S;
-    float rawVelR = (deltaR * m_per_tick) / ENCODER_TASK_DT_S;
-    //////?????
-    float velLfiltered = velL.filter(rawVelL);
-    float velRfiltered = velR.filter(rawVelR);
-    float v = (velLfiltered + velRfiltered) * 0.5f;       // m/s, forward speed
-    float w = (velRfiltered - velLfiltered) / WHEEL_BASE; // rad/s, positive = turning left
-    // TODO: et2akedy men dool
-    float distance_center = ((deltaL * m_per_tick) + (deltaR * m_per_tick)) * 0.5f;
+    // n = snprintf((char *)buf, sizeof buf, "countL: %d countR:%d rawR:%d\r\n", countL, countR, raw_R);
+    // HAL_UART_Transmit(&huart2, buf, n, 20);
+    // n = snprintf((char *)buf, sizeof buf, "A:%d B:%d raw:%u\r\n",
+    //              HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_6),
+    //              HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_7),
+    //              (unsigned)__HAL_TIM_GET_COUNTER(&htim3));
+    // HAL_UART_Transmit(&huart2, buf, n, 20);
+    // motor_speeds(100, 100);
 
-    /*straight line: PD Controller + IR centering + longitudinal correction with diagonal IRs
-      turns: Pure pursuit only, corrected using gyro. there is no IR correction in turns
+    // // --- counts -> distance (m) -> raw velocity (m/s) ---
+    // float rawVelL = (deltaL * m_per_tick) / ENCODER_TASK_DT_S;
+    // float rawVelR = (deltaR * m_per_tick) / ENCODER_TASK_DT_S;
+    // //////?????
+    // float velLfiltered = velL.filter(rawVelL);
+    // float velRfiltered = velR.filter(rawVelR);
+    // float v = (velLfiltered + velRfiltered) * 0.5f;       // m/s, forward speed
+    // float w = (velRfiltered - velLfiltered) / WHEEL_BASE; // rad/s, positive = turning left
+    // // TODO: et2akedy men dool
+    // float distance_center = ((deltaL * m_per_tick) + (deltaR * m_per_tick)) * 0.5f;
 
-      error generated from purepursuit is corrected by the IRs later
-      the error should be negligible for one turn
-    */
-    taskENTER_CRITICAL();
-    MotionType current_motion = motionType;
-    uint32_t cmd = cmd_id;
-    wheelVelocity wheel_speed = wheel_ref;
-    float heading = euler.x(); // degree
-    taskEXIT_CRITICAL();
+    // /*straight line: PD Controller + IR centering + longitudinal correction with diagonal IRs
+    //   turns: Pure pursuit only, corrected using gyro. there is no IR correction in turns
 
-    if (motionType != lastMotionTypeMotion || cmd != last_cmd_id)
-    {
-      // do i reset these? ana mayla le both reset or not reset so idk
-      leftCtrl.reset();
-      rightCtrl.reset();
-      lastMotionTypeMotion = current_motion;
-      last_cmd_id = cmd;
-    }
-    float left_cmd = 0.0f;
-    float right_cmd = 0.0f;
+    //   error generated from purepursuit is corrected by the IRs later
+    //   the error should be negligible for one turn
+    // */
+    // taskENTER_CRITICAL();
+    // MotionType current_motion = motionType;
+    // uint32_t cmd = cmd_id;
+    // wheelVelocity wheel_speed = wheel_ref;
+    // float heading = euler.x(); // degree
+    // taskEXIT_CRITICAL();
 
-    if (current_motion != STOP)
-    {
-      left_cmd = leftCtrl.compute(wheel_speed.left, velLfiltered, dt);
-      right_cmd = rightCtrl.compute(wheel_speed.right, velRfiltered, dt);
-    }
-    motor_speeds(left_cmd, right_cmd);
+    // if (motionType != lastMotionTypeMotion || cmd != last_cmd_id)
+    // {
+    //   // do i reset these? ana mayla le both reset or not reset so idk
+    //   leftCtrl.reset();
+    //   rightCtrl.reset();
+    //   lastMotionTypeMotion = current_motion;
+    //   last_cmd_id = cmd;
+    // }
+    // float left_cmd = 0.0f;
+    // float right_cmd = 0.0f;
 
-    // update global
-    // 2 critical blocks 3ashan mesh taba3 ba3d w law 3ayez ye3mel interrupt mabenhom no problem
-    taskENTER_CRITICAL();
-    position.theta = heading * (M_PI / 180.0); // wont calculate angle from encoders
-    position.x += distance_center * cos(position.theta);
-    position.y += distance_center * sin(position.theta);
-    taskEXIT_CRITICAL();
+    // if (current_motion != STOP)
+    // {
+    //   left_cmd = leftCtrl.compute(wheel_speed.left, velLfiltered, dt);
+    //   right_cmd = rightCtrl.compute(wheel_speed.right, velRfiltered, dt);
+    // }
+    // motor_speeds(left_cmd, right_cmd);
 
-    taskENTER_CRITICAL();
-    robot_velocity.omega = w;
-    robot_velocity.v = v;
-    robot_velocity.vL = velLfiltered;
-    robot_velocity.vR = velRfiltered;
-    taskEXIT_CRITICAL();
+    // // update global
+    // // 2 critical blocks 3ashan mesh taba3 ba3d w law 3ayez ye3mel interrupt mabenhom no problem
+    // taskENTER_CRITICAL();
+    // position.theta = heading * (M_PI / 180.0); // wont calculate angle from encoders
+    // position.x += distance_center * cos(position.theta);
+    // position.y += distance_center * sin(position.theta);
+    // taskEXIT_CRITICAL();
+
+    // taskENTER_CRITICAL();
+    // robot_velocity.omega = w;
+    // robot_velocity.v = v;
+    // robot_velocity.vL = velLfiltered;
+    // robot_velocity.vR = velRfiltered;
+    // taskEXIT_CRITICAL();
   }
 }
 
@@ -573,6 +618,7 @@ void controlTask_run(void *arg)
 
   purePursuit.reset();
 
+  static uint8_t buf[64];
   for (;;)
   {
     vTaskDelayUntil(&last, pdMS_TO_TICKS(5));
@@ -747,16 +793,19 @@ void algorithmTask_run(void *arg)
 
 void HMIConfigTask_run(void *arg)
 {
+  static uint8_t buf[64];
   for (;;)
   {
     ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
     if (calibrateIR)
     {
-      IRCalibration();
-      if (saveIRCalToEEPROM(&hi2c1, ir_thresh))
-        printf("IRcalibration done and saved to eeprom\n");
-      else
-        printf("failed to save IRcalibration to eeprom\n");
+      int n = snprintf((char *)buf, sizeof buf, "calibrate IR\r\n");
+      HAL_UART_Transmit(&huart2, buf, n, 20);
+      // IRCalibration();
+      // if (saveIRCalToEEPROM(&hi2c1, ir_thresh))
+      //   printf("IRcalibration done and saved to eeprom\n");
+      // else
+      //   printf("failed to save IRcalibration to eeprom\n");
       calibrateIR = false;
     }
   }
@@ -764,9 +813,15 @@ void HMIConfigTask_run(void *arg)
 
 void loggerTask_run(void *arg)
 {
+  static uint8_t buf[64];
   for (;;)
   {
     ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+    // int n = snprintf((char *)buf, sizeof(buf), "hi\n");
+    // int n = snprintf((char *)buf, sizeof buf, "%d %d %d \r\n",
+    //                  (int)(euler.x() * 100), (int)(euler.y() * 100), (int)(euler.z() * 100));
+    // HAL_UART_Transmit(&huart2, buf, n, 20);
+    osDelay(20);
   }
 }
 //////////////////////////////////////////////////END TASKS//////////////////////////////////////////////
@@ -774,15 +829,20 @@ void app_main()
 {
   // Write your C++ application code here
   // This acts as your new int main()
-  HAL_TIM_PWM_Start(&htim8, TIM_CHANNEL_1);
-  HAL_TIM_PWM_Start(&htim8, TIM_CHANNEL_2);
-  HAL_TIM_PWM_Start(&htim8, TIM_CHANNEL_3);
-  HAL_TIM_PWM_Start(&htim8, TIM_CHANNEL_4);
+  // motors
+  HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
+  HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_2);
+  HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_3);
+  HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_4);
+  // encoders
+  HAL_TIM_Encoder_Start(&htim2, TIM_CHANNEL_ALL); // left encoder
+  HAL_TIM_Encoder_Start(&htim3, TIM_CHANNEL_ALL); // right encoder
+
+  // for millis()
+  HAL_TIM_Base_Start(&htim5);
 
   // set the timer to be at ARR 3ashan lama tim4 ye trigger it yebda2 men zero
   // probably wont matter if we set it at zero 3ady
-  TIM8->CNT = TIM8->ARR;
-  __HAL_TIM_CLEAR_FLAG(&htim8, TIM_FLAG_UPDATE | TIM_FLAG_CC4);
 
   HAL_TIM_DMABurst_MultiWriteStart(&htim8, TIM_DMABASE_CCR1, TIM_DMA_CC4,
                                    (const uint32_t *)ir_sequence,
@@ -791,5 +851,12 @@ void app_main()
   HAL_ADC_Start(&hadc2);
   HAL_ADCEx_MultiModeStart_DMA(&hadc1, (uint32_t *)adc_dma_buffer, 3);
 
+  // ir trig/adc conversion
+  HAL_TIM_PWM_Start(&htim8, TIM_CHANNEL_1);
+  HAL_TIM_PWM_Start(&htim8, TIM_CHANNEL_2);
+  HAL_TIM_PWM_Start(&htim8, TIM_CHANNEL_3);
+  HAL_TIM_PWM_Start(&htim8, TIM_CHANNEL_4);
+
+  // master timer for ir
   HAL_TIM_Base_Start(&htim4);
 }

@@ -83,10 +83,13 @@ void Error_Handler(void);
 #define BNO_SCL_GPIO_Port GPIOB
 #define BTN_3_Pin GPIO_PIN_12
 #define BTN_3_GPIO_Port GPIOB
+#define BTN_3_EXTI_IRQn EXTI15_10_IRQn
 #define BTN_1_Pin GPIO_PIN_13
 #define BTN_1_GPIO_Port GPIOB
+#define BTN_1_EXTI_IRQn EXTI15_10_IRQn
 #define BTN_2_Pin GPIO_PIN_14
 #define BTN_2_GPIO_Port GPIOB
+#define BTN_2_EXTI_IRQn EXTI15_10_IRQn
 #define SIDE_TRIG_Pin GPIO_PIN_6
 #define SIDE_TRIG_GPIO_Port GPIOC
 #define DIAGONAL_TRIG_Pin GPIO_PIN_7

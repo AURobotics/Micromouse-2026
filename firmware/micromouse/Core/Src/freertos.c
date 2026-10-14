@@ -105,7 +105,7 @@ static uint8_t loggerSourceCount = 0U;
 osThreadId_t defaultTaskHandle;
 const osThreadAttr_t defaultTask_attributes = {
   .name = "defaultTask",
-  .stack_size = 256 * 4,
+  .stack_size = 512 * 4,
   .priority = (osPriority_t) osPriorityNormal,
 };
 /* Definitions for AlgorithimTask */
@@ -148,21 +148,21 @@ const osThreadAttr_t MotionTask_attributes = {
 osThreadId_t BnoTaskHandle;
 const osThreadAttr_t BnoTask_attributes = {
   .name = "BnoTask",
-  .stack_size = 128 * 4,
+  .stack_size = 512 * 4,
   .priority = (osPriority_t) osPriorityRealtime,
 };
 /* Definitions for HMITask */
 osThreadId_t HMITaskHandle;
 const osThreadAttr_t HMITask_attributes = {
   .name = "HMITask",
-  .stack_size = 128 * 4,
+  .stack_size = 512 * 4,
   .priority = (osPriority_t) osPriorityNormal,
 };
 /* Definitions for LoggerTask */
 osThreadId_t LoggerTaskHandle;
 const osThreadAttr_t LoggerTask_attributes = {
   .name = "LoggerTask",
-  .stack_size = 128 * 4,
+  .stack_size = 512 * 4,
   .priority = (osPriority_t) osPriorityBelowNormal,
 };
 /* Definitions for LoggingQueue */
@@ -315,14 +315,13 @@ void controlTask(void *argument)
 void motionTask(void *argument)
 {
   /* USER CODE BEGIN motionTask */
-  /* Infinite loop */
-  // motionTask_run(argument);
-  for (;;)
-  {
-    ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
-    // vTaskDelayUntil(&last, pdMS_TO_TICKS(5));
-    // motor_speeds(100, 100);
-  }
+  motionTask_run(argument);
+  // for (;;)
+  // {
+  //   // ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+  //   // vTaskDelayUntil(&last, pdMS_TO_TICKS(5));
+  //   // motor_speeds(100, 100);
+  // }
   /* USER CODE END motionTask */
 }
 
@@ -337,9 +336,9 @@ void motionTask(void *argument)
 void bnoTask(void *argument)
 {
   /* USER CODE BEGIN bnoTask */
-  // bnoTask_run(argument);
-  for (;;)
-    ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+  bnoTask_run(argument);
+  // for (;;)
+  //   ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
   /* USER CODE END bnoTask */
 }
 
@@ -355,9 +354,7 @@ void HMIConfigTask(void *argument)
 {
   /* USER CODE BEGIN HMIConfigTask */
   /* Infinite loop */
-  //  HMIConfigTask_run(argument);
-  for (;;)
-    ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+   HMIConfigTask_run(argument);
   /* USER CODE END HMIConfigTask */
 }
 
@@ -372,9 +369,9 @@ void HMIConfigTask(void *argument)
 void loggerTask(void *argument)
 {
   /* USER CODE BEGIN loggerTask */
-  //  loggerTask_run(argument);
-  for (;;)
-    ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+  loggerTask_run(argument);
+  // for (;;)
+  //   ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
   /* USER CODE END loggerTask */
 }
 
@@ -388,58 +385,58 @@ void loggerTask(void *argument)
  *         USB_DEVICE(CDC) via CubeMX, generate MX_USB_DEVICE_Init(), then
  *         call it here.
  */
- static void Logger_ActivateOutput(LogOutput_t output)
- {
-   switch (output)
-   {
-   case LOG_OUTPUT_STLINK:
-     MX_USART2_UART_Init();
-     break;
+/*static*/ void Logger_ActivateOutput(LogOutput_t output)
+{
+  switch (output)
+  {
+  case LOG_OUTPUT_STLINK:
+    MX_USART2_UART_Init();
+    break;
 
-   case LOG_OUTPUT_BLUETOOTH:
-     MX_UART4_Init();
-     BLE_SLEEP_RELEASE();
-     break;
+  case LOG_OUTPUT_BLUETOOTH:
+    MX_UART4_Init();
+    BLE_SLEEP_RELEASE();
+    break;
 
-   case LOG_OUTPUT_USB:
-     /* TODO: MX_USB_DEVICE_Init(); once USB CDC is added to the project */
-     break;
+  case LOG_OUTPUT_USB:
+    /* TODO: MX_USB_DEVICE_Init(); once USB CDC is added to the project */
+    break;
 
-   default:
-     break;
-   }
- }
+  default:
+    break;
+  }
+}
 
- /**
-  * @brief  Puts the given output peripheral to sleep / tears it down so it
-  *         is not left driving its lines while another output is selected.
-  */
- static void Logger_DeactivateOutput(LogOutput_t output)
- {
-   switch (output)
-   {
-   case LOG_OUTPUT_STLINK:
-     HAL_UART_DeInit(&huart2);
-     break;
+/**
+ * @brief  Puts the given output peripheral to sleep / tears it down so it
+ *         is not left driving its lines while another output is selected.
+ */
+/*static*/ void Logger_DeactivateOutput(LogOutput_t output)
+{
+  switch (output)
+  {
+  case LOG_OUTPUT_STLINK:
+    HAL_UART_DeInit(&huart2);
+    break;
 
-   case LOG_OUTPUT_BLUETOOTH:
-     BLE_SLEEP_ASSERT();
-     HAL_UART_DeInit(&huart4);
-     break;
+  case LOG_OUTPUT_BLUETOOTH:
+    //  BLE_SLEEP_ASSERT();
+    //  HAL_UART_DeInit(&huart4);
+    break;
 
-   case LOG_OUTPUT_USB:
-     /* TODO: USB CDC not yet configured in this project. */
-     break;
+  case LOG_OUTPUT_USB:
+    /* TODO: USB CDC not yet configured in this project. */
+    break;
 
-   default:
-     break;
-   }
- }
+  default:
+    break;
+  }
+}
 
 /**
  * @brief  Writes one already-formatted log entry out over the given output.
  */
-static void Logger_TransmitMessage(LogOutput_t output, const LogMessage_t *msg)
+/*static*/ void Logger_TransmitMessage(LogOutput_t output, const LogMessage_t *msg)
 {
   uint16_t len = (uint16_t)strnlen(msg->message, LOG_MSG_MAX_LEN);
 
@@ -455,7 +452,7 @@ static void Logger_TransmitMessage(LogOutput_t output, const LogMessage_t *msg)
     break;
 
   case LOG_OUTPUT_BLUETOOTH:
-    HAL_UART_Transmit(&huart4, (uint8_t *)msg->message, len, LOGGER_UART_TX_TIMEOUT_MS);
+    // HAL_UART_Transmit(&huart4, (uint8_t *)msg->message, len, LOGGER_UART_TX_TIMEOUT_MS);
     break;
 
   case LOG_OUTPUT_USB:
@@ -498,7 +495,7 @@ void Logger_SetOutput(LogOutput_t output)
  *         Logger_Print() tells different calling tasks apart.
  * @retval Pointer to the task's row, or NULL if the table is full.
  */
-static LoggerSource_t *Logger_FindOrCreateSource(osThreadId_t taskId, uint32_t period_ms)
+/*static*/ LoggerSource_t *Logger_FindOrCreateSource(osThreadId_t taskId, uint32_t period_ms)
 {
   for (uint8_t i = 0U; i < loggerSourceCount; i++)
   {
