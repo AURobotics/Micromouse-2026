@@ -247,7 +247,7 @@ void MX_TIM5_Init(void)
 
   /* USER CODE END TIM5_Init 1 */
   htim5.Instance = TIM5;
-  htim5.Init.Prescaler = 0;
+  htim5.Init.Prescaler = 89;
   htim5.Init.CounterMode = TIM_COUNTERMODE_UP;
   htim5.Init.Period = 4294967295;
   htim5.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
@@ -476,7 +476,7 @@ void HAL_TIM_Base_MspInit(TIM_HandleTypeDef* tim_baseHandle)
     hdma_tim8_ch4_trig_com.Init.MemInc = DMA_MINC_ENABLE;
     hdma_tim8_ch4_trig_com.Init.PeriphDataAlignment = DMA_PDATAALIGN_HALFWORD;
     hdma_tim8_ch4_trig_com.Init.MemDataAlignment = DMA_MDATAALIGN_HALFWORD;
-    hdma_tim8_ch4_trig_com.Init.Mode = DMA_NORMAL;
+    hdma_tim8_ch4_trig_com.Init.Mode = DMA_CIRCULAR;
     hdma_tim8_ch4_trig_com.Init.Priority = DMA_PRIORITY_VERY_HIGH;
     hdma_tim8_ch4_trig_com.Init.FIFOMode = DMA_FIFOMODE_DISABLE;
     if (HAL_DMA_Init(&hdma_tim8_ch4_trig_com) != HAL_OK)

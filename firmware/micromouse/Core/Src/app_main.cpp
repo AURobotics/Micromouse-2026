@@ -109,10 +109,10 @@ volatile uint32_t path_version = 0;      // incremented by algorithm task when i
 volatile uint32_t cmd_id = 0;            // incremented by algorithm task when it writes a new command
 
 /////////////////////////////////////////////////HELPER FUNCTIONS//////////////////////////////////////////////////
-uint32_t millis(void)
-{
-  return __HAL_TIM_GET_COUNTER(&htim5);
-}
+// uint32_t micros(void) { return __HAL_TIM_GET_COUNTER(&htim5); }
+// uint32_t millis(void) { return __HAL_TIM_GET_COUNTER(&htim5) / 1000; }
+uint32_t millis(void) { return HAL_GetTick(); }
+
 int _write(int file, char *ptr, int len)
 {
   for (int i = 0; i < len; i++)
@@ -246,20 +246,22 @@ bool calibrateBnoAndSave(imu &bno)
   Calibration_t s{};
   unsigned long start = millis();
   const unsigned long TIMEOUT_MS = 120000;
-
+  uint8_t buf[64];
+  int n;
   printf("BNO Calibration...\n");
   while (true)
   {
     bno.calibration_status(s);
-    printf("sys = %d", s.sys);
-    printf("  gyro = %d", s.gyro);
-    printf("  accel = %d", s.accel);
-    printf("  mag = %d\n", s.mag);
-    if (s.sys == 3 && s.gyro == 3 && s.accel == 3 /*&& s.mag == 3*/)
+    n = snprintf((char *)buf, sizeof buf, "sys=%d gyro=%d accel=%d  mag=%d\r\n", s.sys,
+                 s.gyro, s.accel, s.mag);
+    HAL_UART_Transmit(&huart2, buf, n, 20);
+
+    if (/*s.sys == 3 &&*/ s.gyro == 3 && s.accel == 3 /*&& s.mag == 3*/)
       break;
     if (millis() - start > TIMEOUT_MS)
     {
-      printf("BNO Calibration timed out :(\n");
+      n = snprintf((char *)buf, sizeof buf, "BNO calibration time out\r\n");
+      HAL_UART_Transmit(&huart2, buf, n, 20);
       return false;
     }
 
@@ -269,11 +271,18 @@ bool calibrateBnoAndSave(imu &bno)
   CalibProfile_t p;
   bno.getOffsets(p);
   uint8_t magic_value = EEPROM_MAGIC;
-  writeCalibration(&hi2c1, EEPROM_ADDR_BNO_VALID, &magic_value, 1);
   if (writeCalibration(&hi2c1, EEPROM_ADDR_BNO_OFFSETS, p.data, 22))
-    printf("BNO calibration saved to EEPROM :)\n");
+  {
+    writeCalibration(&hi2c1, EEPROM_ADDR_BNO_VALID, &magic_value, 1);
+    n = snprintf((char *)buf, sizeof buf, "BNO calibration saved to EEPROM :)\r\n");
+    HAL_UART_Transmit(&huart2, buf, n, 20);
+  }
   else
-    printf("saving to eeprom failed :(");
+  {
+    n = snprintf((char *)buf, sizeof buf, "Saving bno calibration to eeprom failed :(\r\n");
+    HAL_UART_Transmit(&huart2, buf, n, 20);
+  }
+
   return true;
 }
 bool loadBnoCalibration(imu &bno)
@@ -291,7 +300,9 @@ bool loadBnoCalibration(imu &bno)
 }
 void IRCalibration(/*uint8_t sensor*/)
 {
-  printf("IR calibration: position robot and then press button2\r\n");
+  uint8_t buf[64];
+  int n = snprintf((char *)buf, sizeof buf, "IR calibration: position robot and then press button2\r\n");
+  HAL_UART_Transmit(&huart2, buf, n, 20);
   // for (int i = 0; i < 6; i++) {
   // printf("Move %d to %d cm from wall, then press IR-CAL button\r\n", sensor, calDistances[i]);
 
@@ -312,7 +323,9 @@ void IRCalibration(/*uint8_t sensor*/)
 
   // printf(" calReadings[%d] = ", sensor);
   // for (int i = 0; i < 6; i++) printf("%ld, ", calReadings[sensor][i]);
-  printf("\r\ncalibration done\r\n");
+  n = snprintf((char *)buf, sizeof buf, "\r\ncalibration done\r\n");
+  HAL_UART_Transmit(&huart2, buf, n, 20);
+
   calibrateIR = false;
 }
 bool saveIRCalToEEPROM(I2C_HandleTypeDef *i2c, int16_t thresholds[6])
@@ -426,11 +439,18 @@ void bnoTask_run(void *arg)
 
   double prevRawYaw = bno.euler().x();
   double yawOffset = 0;
-  double yawJumpThresh = 60; // TODO: tune
-  // if (loadBnoCalibration(bno))
-  //   printf("loaded bnoCalibration successfully :)\n");
-  // else
-  //   printf("no bnoCalibration data to load\n");
+  double yawJumpThresh = 50; // TODO: tune
+  if (loadBnoCalibration(bno))
+  {
+    n = snprintf((char *)buf, sizeof buf, "loaded bnoCalibration successfully :)\r\n");
+    HAL_UART_Transmit(&huart2, buf, n, 20);
+  }
+
+  else
+  {
+    n = snprintf((char *)buf, sizeof buf, "No calibration data to load\r\n");
+    HAL_UART_Transmit(&huart2, buf, n, 20);
+  }
 
   for (;;)
   {
@@ -439,10 +459,10 @@ void bnoTask_run(void *arg)
     // HAL_UART_Transmit(&huart2, buf, n, 20);
     if (calibrateBNO)
     {
-      // calibrateBnoAndSave(bno);
-      calibrateBNO = false;
-      int n = snprintf((char *)buf, sizeof buf, "calibrate bno!\r\n");
+      n = snprintf((char *)buf, sizeof buf, "calibrate bno!\r\n");
       HAL_UART_Transmit(&huart2, buf, n, 20);
+      calibrateBnoAndSave(bno);
+      calibrateBNO = false;
     }
     else
     {
@@ -451,7 +471,8 @@ void bnoTask_run(void *arg)
       if (fabs(angleDiff(prevRawYaw, v.x())) > yawJumpThresh)
       {
         yawOffset += angleDiff(v.x(), prevRawYaw);
-        // printf("-------------------------------------BNO jump detected, discrepancy=%f, newOffset=%f", angleDiff(prevRawYaw, v.x()), yawOffset);
+        n = snprintf((char *)buf, sizeof buf, "-------Yaw jump detected!\r\n");
+        HAL_UART_Transmit(&huart2, buf, n, 20);
       }
       prevRawYaw = v.x();
       taskENTER_CRITICAL();
@@ -459,6 +480,8 @@ void bnoTask_run(void *arg)
       euler.x() += yawOffset;
       gyro = g;
       taskEXIT_CRITICAL();
+      n = snprintf((char *)buf, sizeof buf, "yaw:%.2f  offset:%.2f\r\n", euler.x(), yawOffset);
+      HAL_UART_Transmit(&huart2, buf, n, 20);
     }
   }
 }
@@ -497,17 +520,16 @@ void motionTask_run(void *arg)
   for (;;)
   {
     vTaskDelayUntil(&last, pdMS_TO_TICKS(5));
-    vTaskDelayUntil(&last, pdMS_TO_TICKS(5));
     for (int i = 0; i < 6; i += 2)
     {
       ir_readings[i] = adc_dma_buffer[i / 2] & 0xFFFF;
       ir_readings[i + 1] = (adc_dma_buffer[i / 2] >> 16) & 0xFFFF;
     }
 
-    int n = snprintf((char *)buf, sizeof buf, "%u %u %u %u %u %u \r\n",
-                     ir_readings[0], ir_readings[1], ir_readings[2],
-                     ir_readings[3], ir_readings[4], ir_readings[5]);
-    HAL_UART_Transmit(&huart2, buf, n, 20);
+    // int n = snprintf((char *)buf, sizeof buf, "%u %u %u %u %u %u \r\n",
+    //                  ir_readings[0], ir_readings[1], ir_readings[2],
+    //                  ir_readings[3], ir_readings[4], ir_readings[5]);
+    // HAL_UART_Transmit(&huart2, buf, n, 20);
     // for (int i = 0; i < 6; i += 2)
     // {
     //   ir_readings[i] = adc_dma_buffer[i / 2] & 0xFFFF;
@@ -801,11 +823,20 @@ void HMIConfigTask_run(void *arg)
     {
       int n = snprintf((char *)buf, sizeof buf, "calibrate IR\r\n");
       HAL_UART_Transmit(&huart2, buf, n, 20);
-      // IRCalibration();
-      // if (saveIRCalToEEPROM(&hi2c1, ir_thresh))
-      //   printf("IRcalibration done and saved to eeprom\n");
-      // else
-      //   printf("failed to save IRcalibration to eeprom\n");
+      HAL_GPIO_WritePin(GPIOC, GPIO_PIN_10, GPIO_PIN_SET);
+      IRCalibration();
+      if (saveIRCalToEEPROM(&hi2c1, ir_thresh))
+      {
+        n = snprintf((char *)buf, sizeof buf, "calibration saved to EEPROM:)\r\n %d %d %d %d %d %d", ir_thresh[0], ir_thresh[1], ir_thresh[2], ir_thresh[3], ir_thresh[4], ir_thresh[5]);
+        HAL_UART_Transmit(&huart2, buf, n, 20);
+      }
+      else
+      {
+        n = snprintf((char *)buf, sizeof buf, "failed to save IRCalibration to EEPROM:(\r\n");
+        HAL_UART_Transmit(&huart2, buf, n, 20);
+      }
+
+      HAL_GPIO_WritePin(GPIOC, GPIO_PIN_10, GPIO_PIN_RESET);
       calibrateIR = false;
     }
   }
