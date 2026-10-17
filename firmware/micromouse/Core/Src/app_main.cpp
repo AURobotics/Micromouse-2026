@@ -28,6 +28,7 @@
  * w el tasks and stuff cpp
  */
 #define IR_PULSE_US 100u
+#define N_WIN 5
 bool pausedAndReset = true; // started it as true 3ashan yebda2 el motors mesh sha8aleen and then start on pressing the button
 bool calibrateIR = false;
 bool calibrateBNO = false;
@@ -408,7 +409,7 @@ void StartDefaultTask_run(void *arg)
       pausedAndReset = false;
       int n = snprintf((char *)buf, sizeof buf, "START\r\n");
       HAL_UART_Transmit(&huart2, buf, n, 20);
-      motor_speeds(100, 100);
+      // motor_speeds(100, 100);
       // TODO:start the run: signal algorithm task, or set motionType or whatever
     }
     else if (!pausedAndReset)
@@ -417,7 +418,7 @@ void StartDefaultTask_run(void *arg)
       // STOP motors
       int n = snprintf((char *)buf, sizeof buf, "STOP\r\n");
       HAL_UART_Transmit(&huart2, buf, n, 20);
-      motor_speeds(0, 0);
+      // motor_speeds(0, 0);
       taskENTER_CRITICAL();
       motionType = STOP;
       taskEXIT_CRITICAL();
@@ -480,8 +481,8 @@ void bnoTask_run(void *arg)
       euler.x() += yawOffset;
       gyro = g;
       taskEXIT_CRITICAL();
-      n = snprintf((char *)buf, sizeof buf, "yaw:%.2f  offset:%.2f\r\n", euler.x(), yawOffset);
-      HAL_UART_Transmit(&huart2, buf, n, 20);
+      // n = snprintf((char *)buf, sizeof buf, "yaw:%.2f  offset:%.2f\r\n", euler.x(), yawOffset);
+      // HAL_UART_Transmit(&huart2, buf, n, 20);
     }
   }
 }
@@ -489,18 +490,25 @@ void bnoTask_run(void *arg)
 void motionTask_run(void *arg)
 {
   TickType_t last = xTaskGetTickCount();
-  // iir filter
-  // write position
+  static uint8_t buf[64];
+  int n;
+
   const float m_per_tick = (float)M_PI * WHEEL_DIAMETER / ENCODER_CPR; // meter of travel per encoder tick
 
   double dt = ENCODER_TASK_DT_S;
-  ButterworthIIR velL;
-  ButterworthIIR velR;
 
-  velL.init(1, 200.0f); // cutoff freq, sample rate 5ms
-  velR.init(1, 200.0f);
-  velL.reset();
-  velR.reset();
+  static int32_t totalL = 0;
+  static int32_t hist[N_WIN + 1] = {0};
+  static uint8_t hidx = 0;
+  ButterworthIIR velL_w;
+  velL_w.init(12, 200.0f);
+  velL_w.reset();
+
+  static int32_t histR[N_WIN + 1] = {0};
+  static uint8_t hidxR = 0;
+  ButterworthIIR velR_w;
+  velR_w.init(11, 200.0f);
+  velR_w.reset();
 
   EncoderCount_t countL = (EncoderCount_t)__HAL_TIM_GET_COUNTER(&ENCODER_LEFT_TIM);
   EncoderCount_t countR = (EncoderCount_t)__HAL_TIM_GET_COUNTER(&ENCODER_RIGHT_TIM);
@@ -510,13 +518,18 @@ void motionTask_run(void *arg)
   uint32_t last_cmd_id = 0; // b3rad el command id 3ashan ne know law command gdeda w nreset el controllers
   uint32_t ir_margin = 100; // TODO 3ashan benakhod el reading w hwa odam el 7eeta belzabt bas 3ayzeen nedeeh headroom
 
+  uint16_t irFiltered[6];
+  ButterworthIIR irFilter[6];
+  for (int i = 0; i < 6; i++)
+  {
+    irFilter[i].init(10, 200.0f);
+    irFilter[i].reset();
+  }
   // if (loadIRCalFromEEPROM(&hi2c1))
   //   printf("loaded IR calibration\n");
   // else
   //   printf("no IR calibration in EEPROM\n");
 
-  static uint8_t buf[64];
-  int n;
   for (;;)
   {
     vTaskDelayUntil(&last, pdMS_TO_TICKS(5));
@@ -525,16 +538,17 @@ void motionTask_run(void *arg)
       ir_readings[i] = adc_dma_buffer[i / 2] & 0xFFFF;
       ir_readings[i + 1] = (adc_dma_buffer[i / 2] >> 16) & 0xFFFF;
     }
+    int glitch_count = 0;
+    for (int i = 0; i < 6; i++)
+    {
+      irFiltered[i] = irFilter[i].filter(ir_readings[i]);
+    }
 
-    // int n = snprintf((char *)buf, sizeof buf, "%u %u %u %u %u %u \r\n",
-    //                  ir_readings[0], ir_readings[1], ir_readings[2],
-    //                  ir_readings[3], ir_readings[4], ir_readings[5]);
+    n = snprintf((char *)buf, sizeof buf, "%d,%d\r\n",
+                 ir_readings[4], irFiltered[4]);
+    HAL_UART_Transmit(&huart2, (uint8_t *)buf, n, 10);
     // HAL_UART_Transmit(&huart2, buf, n, 20);
-    // for (int i = 0; i < 6; i += 2)
-    // {
-    //   ir_readings[i] = adc_dma_buffer[i / 2] & 0xFFFF;
-    //   ir_readings[i + 1] = (adc_dma_buffer[i / 2] >> 16) & 0xFFFF;
-    // }
+
     // walls[0] = (ir_readings[0] > ir_thresh[0] - ir_margin) || (ir_readings[1] > ir_thresh[1] - ir_margin);
     // walls[1] = ir_readings[2] > ir_thresh[2] - ir_margin;
     // walls[2] = ir_readings[3] > ir_thresh[3] - ir_margin;
@@ -549,24 +563,31 @@ void motionTask_run(void *arg)
 
     lastCountL = countL;
     lastCountR = raw_R;
+    // #######################################
+    //   --- counts -> distance (m) -> raw velocity (m/s) ---
+    float rawVelL = (deltaL * m_per_tick) / ENCODER_TASK_DT_S;
+    float rawVelR = (deltaR * m_per_tick) / ENCODER_TASK_DT_S;
 
-    // n = snprintf((char *)buf, sizeof buf, "countL: %d countR:%d rawR:%d\r\n", countL, countR, raw_R);
-    // HAL_UART_Transmit(&huart2, buf, n, 20);
-    // n = snprintf((char *)buf, sizeof buf, "A:%d B:%d raw:%u\r\n",
-    //              HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_6),
-    //              HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_7),
-    //              (unsigned)__HAL_TIM_GET_COUNTER(&htim3));
-    // HAL_UART_Transmit(&huart2, buf, n, 20);
-    // motor_speeds(100, 100);
+    // windowed velocity
+    totalL += deltaL;
+    hist[hidx] = totalL;
+    hidx = (hidx + 1) % (N_WIN + 1);
+    int32_t deltaN = totalL - hist[hidx]; // count now minus count N samples ago
+    float winVelL = (deltaN * m_per_tick) / (N_WIN * ENCODER_TASK_DT_S);
+    float velLwinFiltered = velL_w.filter(winVelL);
 
-    // // --- counts -> distance (m) -> raw velocity (m/s) ---
-    // float rawVelL = (deltaL * m_per_tick) / ENCODER_TASK_DT_S;
-    // float rawVelR = (deltaR * m_per_tick) / ENCODER_TASK_DT_S;
-    // //////?????
-    // float velLfiltered = velL.filter(rawVelL);
-    // float velRfiltered = velR.filter(rawVelR);
-    // float v = (velLfiltered + velRfiltered) * 0.5f;       // m/s, forward speed
-    // float w = (velRfiltered - velLfiltered) / WHEEL_BASE; // rad/s, positive = turning left
+    histR[hidxR] = countR;
+    hidxR = (hidxR + 1) % (N_WIN + 1);
+    int32_t deltaNR = countR - histR[hidxR]; // count now minus count N samples ago
+    float winVelR = (deltaNR * m_per_tick) / (N_WIN * ENCODER_TASK_DT_S);
+    float velRwinFiltered = velR_w.filter(winVelR);
+    // ######################################
+    // n = snprintf((char *)buf, sizeof(buf), "%ld,%ld\r\n",
+    //              (long)(rawVelR * 1000.0f),
+    //              (long)(velRwinFiltered * 1000.0f));
+
+    // float v = (velLwinFiltered + velRwinFiltered) * 0.5f;       // m/s, forward speed
+    // float w = (velRwinFiltered - velLwinFiltered) / WHEEL_BASE; // rad/s, positive = turning left
     // // TODO: et2akedy men dool
     // float distance_center = ((deltaL * m_per_tick) + (deltaR * m_per_tick)) * 0.5f;
 
