@@ -538,15 +538,14 @@ void motionTask_run(void *arg)
       ir_readings[i] = adc_dma_buffer[i / 2] & 0xFFFF;
       ir_readings[i + 1] = (adc_dma_buffer[i / 2] >> 16) & 0xFFFF;
     }
-    int glitch_count = 0;
     for (int i = 0; i < 6; i++)
     {
       irFiltered[i] = irFilter[i].filter(ir_readings[i]);
     }
 
-    n = snprintf((char *)buf, sizeof buf, "%d,%d\r\n",
-                 ir_readings[4], irFiltered[4]);
-    HAL_UART_Transmit(&huart2, (uint8_t *)buf, n, 10);
+    // n = snprintf((char *)buf, sizeof buf, "%d,%d\r\n",
+    //              ir_readings[4], irFiltered[4]);
+    // HAL_UART_Transmit(&huart2, (uint8_t *)buf, n, 10);
     // HAL_UART_Transmit(&huart2, buf, n, 20);
 
     // walls[0] = (ir_readings[0] > ir_thresh[0] - ir_margin) || (ir_readings[1] > ir_thresh[1] - ir_margin);
@@ -581,7 +580,12 @@ void motionTask_run(void *arg)
     int32_t deltaNR = countR - histR[hidxR]; // count now minus count N samples ago
     float winVelR = (deltaNR * m_per_tick) / (N_WIN * ENCODER_TASK_DT_S);
     float velRwinFiltered = velR_w.filter(winVelR);
+    motor_speeds(70, 70);
+
     // ######################################
+    n = snprintf((char *)buf, sizeof(buf), "%d\r\n",
+                 (countR));
+    HAL_UART_Transmit(&huart2, (uint8_t *)buf, n, 10);
     // n = snprintf((char *)buf, sizeof(buf), "%ld,%ld\r\n",
     //              (long)(rawVelR * 1000.0f),
     //              (long)(velRwinFiltered * 1000.0f));
