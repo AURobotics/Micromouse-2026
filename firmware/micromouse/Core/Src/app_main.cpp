@@ -28,7 +28,7 @@
  * w el tasks and stuff cpp
  */
 #define IR_PULSE_US 100u
-#define N_WIN 5
+#define N_WIN 15
 bool pausedAndReset = true; // started it as true 3ashan yebda2 el motors mesh sha8aleen and then start on pressing the button
 bool calibrateIR = false;
 bool calibrateBNO = false;
@@ -96,9 +96,8 @@ QueueHandle_t motionStatusQueue; // queue 3ashan ye trigger algorithm when statu
 MotionType motionType = STOP;
 double target_v = 0.0; // m/s, set by algorithm task, read by control task
 // TODO: tune these // km_ff tau_ff kp ki
-FFPIConfig left_config = {0.05f, 0.12f, 0, 0};
-
-FFPIConfig right_config = {0.05f, 0.12f, 0, 0};
+FFPIConfig left_config = {0.0057f, 0.125f, 1.6, 16}; // max speed = 0.63
+FFPIConfig right_config = {0.0056f, 0.125f, 0.8, 11};// max speed = 0.62
 static VelocityController leftCtrl(left_config);
 static VelocityController rightCtrl(right_config);
 // lookahead, wheel_base, kp_omega, kd_omega
@@ -501,13 +500,13 @@ void motionTask_run(void *arg)
   static int32_t hist[N_WIN + 1] = {0};
   static uint8_t hidx = 0;
   ButterworthIIR velL_w;
-  velL_w.init(12, 200.0f);
+  velL_w.init(10, 200.0f);
   velL_w.reset();
 
   static int32_t histR[N_WIN + 1] = {0};
   static uint8_t hidxR = 0;
   ButterworthIIR velR_w;
-  velR_w.init(11, 200.0f);
+  velR_w.init(10, 200.0f);
   velR_w.reset();
 
   EncoderCount_t countL = (EncoderCount_t)__HAL_TIM_GET_COUNTER(&ENCODER_LEFT_TIM);
@@ -530,6 +529,8 @@ void motionTask_run(void *arg)
   // else
   //   printf("no IR calibration in EEPROM\n");
 
+  leftCtrl.reset();
+  // rightCtrl.reset();
   for (;;)
   {
     vTaskDelayUntil(&last, pdMS_TO_TICKS(5));
@@ -580,15 +581,28 @@ void motionTask_run(void *arg)
     int32_t deltaNR = countR - histR[hidxR]; // count now minus count N samples ago
     float winVelR = (deltaNR * m_per_tick) / (N_WIN * ENCODER_TASK_DT_S);
     float velRwinFiltered = velR_w.filter(winVelR);
-    motor_speeds(70, 70);
 
     // ######################################
-    n = snprintf((char *)buf, sizeof(buf), "%d\r\n",
-                 (countR));
-    HAL_UART_Transmit(&huart2, (uint8_t *)buf, n, 10);
-    // n = snprintf((char *)buf, sizeof(buf), "%ld,%ld\r\n",
-    //              (long)(rawVelR * 1000.0f),
-    //              (long)(velRwinFiltered * 1000.0f));
+    // n = snprintf((char *)buf, sizeof(buf), "%d\r\n",
+    //              (countR));
+    // HAL_UART_Transmit(&huart2, (uint8_t *)buf, n, 10);
+    // motor_speeds(100, 100);
+    ////finding the first value that drives the motors
+    // for (int i = 0; i <= 100; i++)
+    // {
+    // n = snprintf((char *)buf, sizeof(buf), "time:%lu,pwm:%d,velL:%ld\r\n",
+    //              (unsigned long)millis(), 100 * MOTOR_PWM_MAX_CCR,
+    //              (long)(velLwinFiltered * 1000.0f));
+    // HAL_UART_Transmit(&huart2, buf, n, 10);
+    // motor_speeds(100, 0);
+    // vTaskDelay(pdMS_TO_TICKS(500));
+    // }
+    n = snprintf((char *)buf, sizeof(buf), "%lu,%d,%ld\r\n",
+                 (unsigned long)millis(), (int)(0.5 * 1000),
+                 (long)(velLwinFiltered * 1000.0f));
+    HAL_UART_Transmit(&huart2, buf, n, 10);
+    float left_cmd = leftCtrl.compute(0.5f, velLwinFiltered, dt);
+    motor_speeds(left_cmd, 0);
 
     // float v = (velLwinFiltered + velRwinFiltered) * 0.5f;       // m/s, forward speed
     // float w = (velRwinFiltered - velLwinFiltered) / WHEEL_BASE; // rad/s, positive = turning left
