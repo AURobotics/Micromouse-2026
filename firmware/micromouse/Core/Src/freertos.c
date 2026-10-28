@@ -298,9 +298,7 @@ void algorithimTask(void *argument)
 void controlTask(void *argument)
 {
   /* USER CODE BEGIN controlTask */
-  // controlTask_run(argument);
-  for (;;)
-    ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+  controlTask_run(argument);
   /* USER CODE END controlTask */
 }
 
