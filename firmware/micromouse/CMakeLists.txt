@@ -62,6 +62,8 @@ target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
         Core/lib/PDcontroller
         Core/lib/BNO055-driver
         Core/lib/eeprom
+        Core/lib/test_lib
+        Core/lib/motor
 )
 
 # Add project symbols (macros)

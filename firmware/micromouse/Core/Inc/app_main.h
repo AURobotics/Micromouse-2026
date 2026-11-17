@@ -1,9 +1,9 @@
 #ifndef APP_MAIN_H
 #define APP_MAIN_H
+#include "cmsis_os2.h"
 
 #ifdef __cplusplus
-extern "C"
-{
+extern "C" {
 #endif
 
 #define ENCODER_LEFT_TIM htim2
@@ -11,9 +11,9 @@ extern "C"
 
 #define ENCODER_CPR 362 //// counts per revolution
 // TODO:wheel measurements
-#define WHEEL_DIAMETER 0.02          //// in meters
-#define WHEEL_BASE 0.03              //// in meters
-#define ENCODER_TASK_DT_S 0.005      //// in seconds
+#define WHEEL_DIAMETER 0.02 //// in meters
+#define WHEEL_BASE 0.03 //// in meters
+#define ENCODER_TASK_DT_S 0.005 //// in seconds
 #define EXPECTED_SIDE_DIST_TO_WALL 9 // TODO:(half cell width - half width of robot)
 
 // TODO:check pins
@@ -35,29 +35,31 @@ extern "C"
 #define BTN_BNOCAL_PIN BTN_1_Pin
 
 #define EEPROM_MAGIC 0x42
-#define EEPROM_ADDR_BNO_VALID 0   // 1 byte
+#define EEPROM_ADDR_BNO_VALID 0 // 1 byte
 #define EEPROM_ADDR_BNO_OFFSETS 5 // 22 bytes -> 5-26
 
 #define EEPROM_ADDR_IR_VALID 1 // 1 byte
-#define EEPROM_ADDR_IR_CAL 30  // 48 bytes -> 30-77 (left a gap after BNO)
+#define EEPROM_ADDR_IR_CAL 30 // 48 bytes -> 30-77 (left a gap after BNO)
+#define constrain(x, low, high) ((x) < (low) ? (low) : ((x) > (high) ? (high) : (x)))
 
-    extern osThreadId_t defaultTaskHandle;
-    extern osThreadId_t AlgorithimTaskHandle;
-    extern osThreadId_t ControlTaskHandle;
-    extern osThreadId_t MotionTaskHandle;
-    extern osThreadId_t BnoTaskHandle;
-    extern osThreadId_t HMITaskHandle;
-    extern osThreadId_t LoggerTaskHandle;
-    extern osMessageQueueId_t LoggingQueueHandle;
 
-    void StartDefaultTask_run(void *arg);
-    void bnoTask_run(void *arg);
-    void motionTask_run(void *arg);
-    void controlTask_run(void *arg);
-    void algorithmTask_run(void *arg);
-    void HMIConfigTask_run(void *arg);
-    void loggerTask_run(void *arg);
-    void app_main(); // This is your C++ entry function
+extern osThreadId_t defaultTaskHandle;
+extern osThreadId_t AlgorithimTaskHandle;
+extern osThreadId_t ControlTaskHandle;
+extern osThreadId_t MotionTaskHandle;
+extern osThreadId_t BnoTaskHandle;
+extern osThreadId_t HMITaskHandle;
+extern osThreadId_t LoggerTaskHandle;
+extern osMessageQueueId_t LoggingQueueHandle;
+
+void StartDefaultTask_run(void* arg);
+void bnoTask_run(void* arg);
+void motionTask_run(void* arg);
+void controlTask_run(void* arg);
+void algorithmTask_run(void* arg);
+void HMIConfigTask_run(void* arg);
+void loggerTask_run(void* arg);
+void app_main(); // This is your C++ entry function
 
 #ifdef __cplusplus
 }
