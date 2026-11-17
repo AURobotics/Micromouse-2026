@@ -30,6 +30,8 @@
 #include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
+
+#include "app_main.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/

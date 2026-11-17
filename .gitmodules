@@ -1,0 +1,3 @@
+[submodule "firmware/raw_algo"]
+	path = firmware/raw_algo
+	url = https://github.com/minawashere/micromouse_algorithim.git
