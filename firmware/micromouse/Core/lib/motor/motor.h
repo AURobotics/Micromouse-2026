@@ -25,12 +25,8 @@ public:
 
         void init() const { HAL_TIM_Encoder_Start(m_encoder_timer, TIM_CHANNEL_ALL); }
 
-        /**
-         * @return the change in encoder value since last call
-         */
         [[nodiscard]] int32_t delta()
         {
-            // casts to uint16 then to int16 to handle ovf between readings.
             uint32_t now = __HAL_TIM_GET_COUNTER(m_encoder_timer);
             int32_t delta = static_cast<int16_t>(static_cast<uint16_t>(now - m_last));
             m_last = now;
