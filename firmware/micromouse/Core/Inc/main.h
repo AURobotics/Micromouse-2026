@@ -104,10 +104,6 @@ void Error_Handler(void);
 #define BNO_SDA_GPIO_Port GPIOC
 #define BNO_INT_Pin GPIO_PIN_2
 #define BNO_INT_GPIO_Port GPIOD
-#define BLE_TX_Pin GPIO_PIN_6
-#define BLE_TX_GPIO_Port GPIOB
-#define BLE_RX_Pin GPIO_PIN_7
-#define BLE_RX_GPIO_Port GPIOB
 
 /* USER CODE BEGIN Private defines */
 
