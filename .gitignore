@@ -12,9 +12,9 @@ compile_commands.json
 
 # IDE
 .idea/
-.vscode/*
-!.vscode/settings.json
-!.vscode/extensions.json
+.vscode/
+.vscode/settings.json
+.vscode/extensions.json
 *.user
 .ai/
 
