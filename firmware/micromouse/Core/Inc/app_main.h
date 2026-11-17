@@ -9,9 +9,9 @@ extern "C"
 #define ENCODER_LEFT_TIM htim2
 #define ENCODER_RIGHT_TIM htim3
 
-#define ENCODER_CPR 362 //// counts per revolution
+#define ENCODER_CPR 361.2 //// counts per revolution 361
 // TODO:wheel measurements
-#define WHEEL_DIAMETER 0.02          //// in meters
+#define WHEEL_DIAMETER 0.026         //// in meters
 #define WHEEL_BASE 0.03              //// in meters
 #define ENCODER_TASK_DT_S 0.005      //// in seconds
 #define EXPECTED_SIDE_DIST_TO_WALL 9 // TODO:(half cell width - half width of robot)
@@ -57,6 +57,7 @@ extern "C"
     void algorithmTask_run(void *arg);
     void HMIConfigTask_run(void *arg);
     void loggerTask_run(void *arg);
+    void ControlTask5ms_Callback(void);
     void app_main(); // This is your C++ entry function
 
 #ifdef __cplusplus
