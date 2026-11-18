@@ -928,6 +928,16 @@ void loggerTask_run(void* arg)
 void app_main()
 {
 
+    // Write your C++ application code here
+    // This acts as your new int main()
+    // motors
+    while (true)
+    {
+        printf("lolo");
+        HAL_Delay(10);
+    }
+
+
     // for millis()
     HAL_TIM_Base_Start(&htim5);
 
