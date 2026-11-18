@@ -57,6 +57,7 @@ enum MotionType
     STOP,
     TURN,
     TESTING_WHEEL_SPEEDS,
+    TURN_IN_PLACE
 };
 
 typedef struct
@@ -121,14 +122,14 @@ volatile uint32_t path_version = 0; // incremented by algorithm task when it wri
 volatile uint32_t cmd_id = 0; // incremented by algorithm task when it writes a new command
 
 /////////////////////////////////////////////////HELPER
-///FUNCTIONS//////////////////////////////////////////////////
+/// FUNCTIONS//////////////////////////////////////////////////
 // uint32_t micros(void) { return __HAL_TIM_GET_COUNTER(&htim5); }
 // uint32_t millis(void) { return __HAL_TIM_GET_COUNTER(&htim5) / 1000; }
 uint32_t millis(void) { return HAL_GetTick(); }
 
 int _write(int file, char* ptr, int len)
 {
-    HAL_UART_Transmit(&huart2, (uint8_t *)ptr, len, HAL_MAX_DELAY);
+    HAL_UART_Transmit(&huart2, (uint8_t*)ptr, len, HAL_MAX_DELAY);
     return len;
 }
 void SWO_Init(void) // in order to use ITM_SendChar
@@ -161,6 +162,33 @@ double angleDiff(double start, double goal)
         diff += 360;
     return diff;
 }
+
+// ai generated functions for testing purepursuit
+// probably will need something liek this nedeeh el cells el ehna 3ayzeen nero7ha w it generates a line
+std::vector<Point> makeLine(double x0, double y0, double x1, double y1, double step = 0.01)
+{
+  std::vector<Point> p;
+  double len = std::hypot(x1 - x0, y1 - y0);
+  int n = std::max(1, (int)(len / step));
+  for (int i = 0; i <= n; ++i)
+  {
+    double t = (double)i / n;
+    p.push_back({x0 + t * (x1 - x0), y0 + t * (y1 - y0)});
+  }
+  return p;
+}
+
+std::vector<Point> makeArc(double cx, double cy, double r, double a0, double a1, double step = 0.01)
+{
+  std::vector<Point> p;
+  int n = std::max(1, (int)(std::fabs(a1 - a0) * r / step));
+  for (int i = 0; i <= n; ++i)
+  {
+    double a = a0 + (a1 - a0) * i / n;
+    p.push_back({cx + r * std::cos(a), cy + r * std::sin(a)});
+  }
+  return p;
+}
 extern "C" void app_rtos_init(void)
 {
     if (!pathMutex)
@@ -174,10 +202,11 @@ extern "C" void app_rtos_init(void)
 
 void motor_speeds(float left_speed, float right_speed)
 {
-    //todo
-    // motors(&MOTOR_LEFT_TIM, MOTOR_LEFT_FORWARD_CHANNEL, MOTOR_LEFT_BACKWARD_CHANNEL, left_speed);
-    // motors(&MOTOR_RIGHT_TIM, MOTOR_RIGHT_FORWARD_CHANNEL, MOTOR_RIGHT_BACKWARD_CHANNEL,
-    //        right_speed);
+    // todo
+    //  motors(&MOTOR_LEFT_TIM, MOTOR_LEFT_FORWARD_CHANNEL, MOTOR_LEFT_BACKWARD_CHANNEL,
+    //  left_speed); motors(&MOTOR_RIGHT_TIM, MOTOR_RIGHT_FORWARD_CHANNEL,
+    //  MOTOR_RIGHT_BACKWARD_CHANNEL,
+    //         right_speed);
 }
 extern "C" void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef* hadc)
 {
@@ -426,6 +455,8 @@ void StartDefaultTask_run(void* arg)
     }
 }
 
+// Convention: CCW positive, 0 = starting heading, degrees in euler.x(), radians in position.theta.
+//  turn left +ve, turn right -ve .....3,2,1,0,-1,-2,-3....
 void bnoTask_run(void* arg)
 {
     TickType_t last = xTaskGetTickCount();
@@ -475,395 +506,479 @@ void bnoTask_run(void* arg)
                 n = snprintf((char*)buf, sizeof buf, "-------Yaw jump detected!\r\n");
                 HAL_UART_Transmit(&huart2, buf, n, 20);
             }
+
             prevRawYaw = v.x();
+
+            float h = -(v.x() + yawOffset);
+            while (h > 180.0f)
+                h -= 360.0f;
+            while (h < -180.0f)
+                h += 360.0f;
             taskENTER_CRITICAL();
             euler = v;
-            euler.x() += yawOffset;
+            euler.x() = h;
             gyro = g;
             taskEXIT_CRITICAL();
+            
             // n = snprintf((char *)buf, sizeof buf, "yaw:%.2f  offset:%.2f\r\n", euler.x(),
             // yawOffset); HAL_UART_Transmit(&huart2, buf, n, 20);
         }
     }
 }
 
-void motionTask_run(void* arg)
+void motionTask_run(void *arg)
 {
-    TickType_t last = xTaskGetTickCount();
-    static uint8_t buf[64];
-    int n;
+  TickType_t last = xTaskGetTickCount();
+  static uint8_t buf[64];
+  int n;
+  // ####################################################
 
-    const float m_per_tick =
-        (float)M_PI * WHEEL_DIAMETER / ENCODER_CPR; // meter of travel per encoder tick
+  // ##############################################
 
-    double dt = ENCODER_TASK_DT_S;
+  uint32_t ir_margin = 100; // TODO 3ashan benakhod el reading w hwa odam el 7eeta belzabt bas 3ayzeen nedeeh headroom
+  uint16_t irFiltered[6];
+  ButterworthIIR irFilter[6];
+  for (int i = 0; i < 6; i++)
+  {
+    irFilter[i].init(10, 200.0f); // c--> 10~20
+    irFilter[i].reset();
+  }
+  if (loadIRCalFromEEPROM(&hi2c1))
+    printf("loaded IR calibration\n");
+  else
+    printf("no IR calibration in EEPROM\n");
 
-    static int32_t totalL = 0;
-    static int32_t hist[N_WIN + 1] = {0};
-    static uint8_t hidx = 0;
-    ButterworthIIR velL_w;
-    velL_w.init(10, 200.0f);
-    velL_w.reset();
+  leftCtrl.reset();
+  rightCtrl.reset();
 
-    static int32_t histR[N_WIN + 1] = {0};
-    static uint8_t hidxR = 0;
-    ButterworthIIR velR_w;
-    velR_w.init(10, 200.0f);
-    velR_w.reset();
+  for (;;)
+  {
+    ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
 
-    EncoderCount_t countL = (EncoderCount_t)__HAL_TIM_GET_COUNTER(&ENCODER_LEFT_TIM);
-    EncoderCount_t countR = (EncoderCount_t)__HAL_TIM_GET_COUNTER(&ENCODER_RIGHT_TIM);
-    EncoderCount_t lastCountL = countL;
-    EncoderCount_t /* Infinite loop */ lastCountR = countR;
-    MotionType lastMotionTypeMotion = STOP;
-    uint32_t last_cmd_id =
-        0; // b3rad el command id 3ashan ne know law command gdeda w nreset el controllers
-    uint32_t ir_margin = 100; // TODO 3ashan benakhod el reading w hwa odam el 7eeta belzabt bas
-                              // 3ayzeen nedeeh headroom
-
-    uint16_t irFiltered[6];
-    ButterworthIIR irFilter[6];
+    for (int i = 0; i < 6; i += 2)
+    {
+      ir_readings[i] = adc_dma_buffer[i / 2] & 0xFFFF;
+      ir_readings[i + 1] = (adc_dma_buffer[i / 2] >> 16) & 0xFFFF;
+    }
     for (int i = 0; i < 6; i++)
     {
-        irFilter[i].init(10, 200.0f);
-        irFilter[i].reset();
+      irFiltered[i] = irFilter[i].filter(ir_readings[i]);
     }
-    // if (loadIRCalFromEEPROM(&hi2c1))
-    //   printf("loaded IR calibration\n");
-    // else
-    //   printf("no IR calibration in EEPROM\n");
 
-    leftCtrl.reset();
-    rightCtrl.reset();
-    for (;;)
-    {
-        ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+    // n = snprintf((char *)buf, sizeof buf, "%d %d %d %d %d %d\r\n",
+    //              ir_readings[0], ir_readings[1], ir_readings[2], ir_readings[3], ir_readings[4], ir_readings[5]);
+    // HAL_UART_Transmit(&huart2, (uint8_t *)buf, n, 10);
 
-        for (int i = 0; i < 6; i += 2)
-        {
-            ir_readings[i] = adc_dma_buffer[i / 2] & 0xFFFF;
-            ir_readings[i + 1] = (adc_dma_buffer[i / 2] >> 16) & 0xFFFF;
-        }
-        for (int i = 0; i < 6; i++)
-        {
-            irFiltered[i] = irFilter[i].filter(ir_readings[i]);
-        }
+    // walls[0] = (ir_readings[0] > ir_thresh[0] - ir_margin) || (ir_readings[1] > ir_thresh[1] - ir_margin);
+    // walls[1] = ir_readings[2] > ir_thresh[2] - ir_margin;
+    // walls[2] = ir_readings[3] > ir_thresh[3] - ir_margin;
+    // n = snprintf((char *)buf, sizeof buf, "%d,%d\r\n",
+    //              (ir_readings[0]), (irFiltered[0]));
+    // HAL_UART_Transmit(&huart2, (uint8_t *)buf, n, 10);
 
-        n = snprintf((char*)buf, sizeof buf, "%d %d %d %d %d %d\r\n", ir_readings[0],
-                     ir_readings[1], ir_readings[2], ir_readings[3], ir_readings[4],
-                     ir_readings[5]);
-        HAL_UART_Transmit(&huart2, (uint8_t*)buf, n, 10);
-        HAL_UART_Transmit(&huart2, buf, n, 20);
-
-        // walls[0] = (ir_readings[0] > ir_thresh[0] - ir_margin) || (ir_readings[1] > ir_thresh[1]
-        // - ir_margin); walls[1] = ir_readings[2] > ir_thresh[2] - ir_margin; walls[2] =
-        // ir_readings[3] > ir_thresh[3] - ir_margin; raw counts overflow logic for tim3 16bit
-        uint16_t raw_R = __HAL_TIM_GET_COUNTER(&ENCODER_RIGHT_TIM);
-        int32_t deltaR = (int16_t)(raw_R - lastCountR);
-        countR += deltaR;
-
-        countL = (EncoderCount_t)__HAL_TIM_GET_COUNTER(&ENCODER_LEFT_TIM);
-        int32_t deltaL = (int32_t)(countL - lastCountL);
-
-        lastCountL = countL;
-        lastCountR = raw_R;
-        // #######################################
-        //   --- counts -> distance (m) -> raw velocity (m/s) ---
-        float rawVelL = (deltaL * m_per_tick) / ENCODER_TASK_DT_S;
-        float rawVelR = (deltaR * m_per_tick) / ENCODER_TASK_DT_S;
-
-        // windowed velocity
-        totalL += deltaL;
-        hist[hidx] = totalL;
-        hidx = (hidx + 1) % (N_WIN + 1);
-        int32_t deltaN = totalL - hist[hidx]; // count now minus count N samples ago
-        float winVelL = (deltaN * m_per_tick) / (N_WIN * ENCODER_TASK_DT_S);
-        float velLwinFiltered = velL_w.filter(winVelL);
-
-        histR[hidxR] = countR;
-        hidxR = (hidxR + 1) % (N_WIN + 1);
-        int32_t deltaNR = countR - histR[hidxR]; // count now minus count N samples ago
-        float winVelR = (deltaNR * m_per_tick) / (N_WIN * ENCODER_TASK_DT_S);
-        float velRwinFiltered = velR_w.filter(winVelR);
-
-        // ######################################
-        // n = snprintf((char *)buf, sizeof(buf), "%d\r\n",
-        //              (countR));
-        // HAL_UART_Transmit(&huart2, (uint8_t *)buf, n, 10);
-        // motor_speeds(100, 100);
-        ////finding the first value that drives the motors
-        // for (int i = 0; i <= 100; i++)
-        // {
-        // n = snprintf((char *)buf, sizeof(buf), "time:%lu,pwm:%d,velL:%ld\r\n",
-        //              (unsigned long)millis(), 100 * MOTOR_PWM_MAX_CCR,
-        //              (long)(velLwinFiltered * 1000.0f));
-        // HAL_UART_Transmit(&huart2, buf, n, 10);
-        // motor_speeds(100, 0);
-        // vTaskDelay(pdMS_TO_TICKS(500));
-        // }
-
-        // ##############TUNING FFFPI################################
-        //  n = snprintf((char *)buf, sizeof(buf), "%lu,%d,%ld\r\n",
-        //               (unsigned long)millis(), (int)(0.5 * 1000),
-        //               (long)(velLwinFiltered * 1000.0f));
-        //  HAL_UART_Transmit(&huart2, buf, n, 10);
-        //  float left_cmd = leftCtrl.compute(0.5f, velLwinFiltered, dt);
-        //  motor_speeds(left_cmd, 0);
-
-        // float v = (velLwinFiltered + velRwinFiltered) * 0.5f;       // m/s, forward speed
-        // float w = (velRwinFiltered - velLwinFiltered) / WHEEL_BASE; // rad/s, positive = turning
-        // left
-        // // TODO: et2akedy men dool
-        // float distance_center = ((deltaL * m_per_tick) + (deltaR * m_per_tick)) * 0.5f;
-
-        // /*straight line: PD Controller + IR centering + longitudinal correction with diagonal IRs
-        //   turns: Pure pursuit only, corrected using gyro. there is no IR correction in turns
-
-        //   error generated from purepursuit is corrected by the IRs later
-        //   the error should be negligible for one turn
-        // */
-        // taskENTER_CRITICAL();
-        // MotionType current_motion = motionType;
-        // uint32_t cmd = cmd_id;
-        // float heading = euler.x(); // degree
-        // taskEXIT_CRITICAL();
-
-        // if (motionType != lastMotionTypeMotion || cmd != last_cmd_id)
-        // {
-        //   // do i reset these? ana mayla le both reset or not reset so idk
-        //   leftCtrl.reset();
-        //   rightCtrl.reset();
-        //   lastMotionTypeMotion = current_motion;
-        //   last_cmd_id = cmd;
-        // }
-        wheelVelocity wheel_speed = wheel_ref;
-        float left_cmd = 0.0f;
-        float right_cmd = 0.0f;
-
-        // if (current_motion != STOP)
-        // {
-        //   left_cmd = leftCtrl.compute(wheel_speed.left, velLfiltered, dt);
-        //   right_cmd = rightCtrl.compute(wheel_speed.right, velRfiltered, dt);
-        // }
-        // motor_speeds(left_cmd, right_cmd);
-        left_cmd = leftCtrl.compute(wheel_speed.left, velLwinFiltered, dt);
-        right_cmd = rightCtrl.compute(wheel_speed.right, velRwinFiltered, dt);
-        motor_speeds(left_cmd, right_cmd);
-        // n = snprintf((char *)buf, sizeof(buf), "%f,%f, %f\r\n",
-        //              left_cmd, right_cmd, euler.x());
-        // HAL_UART_Transmit(&huart2, buf, n, 10);
-        // // update global
-        // // 2 critical blocks 3ashan mesh taba3 ba3d w law 3ayez ye3mel interrupt mabenhom no
-        // problem taskENTER_CRITICAL(); position.theta = heading * (M_PI / 180.0); // wont
-        // calculate angle from encoders position.x += distance_center * cos(position.theta);
-        // position.y += distance_center * sin(position.theta);
-        // taskEXIT_CRITICAL();
-
-        // taskENTER_CRITICAL();
-        // robot_velocity.omega = w;
-        // robot_velocity.v = v;
-        // robot_velocity.vL = velLfiltered;
-        // robot_velocity.vR = velRfiltered;
-        // taskEXIT_CRITICAL();
-    }
+  }
 }
 
-void controlTask_run(void* arg)
+void controlTask_run(void *arg)
 {
-    TickType_t last = xTaskGetTickCount();
-    double dt = 0.005;
-    // std::vector<Point> path;
-    PDController headingHoldPD(0.003, 0, -0.12, 0.12); // TODO:tune kp,kd
-    PDController lateralPD(0, 0, -10, 10); // TODO:tune kp,kd
-    float target_heading = 0; // read only the moment we lose wall reference
-    float lateral_correction = 0.0f;
+  TickType_t last = xTaskGetTickCount();
+  double dt = 0.005;
+  std::vector<Point> path = makeLine(0, 0, 2, 0);
+  PDController headingHoldPD(0.003, 0.001, -0.12, 0.12); // TODO:tune kp,kd
+  PDController lateralPD(0, 0, -10, 10);                 // TODO:tune kp,kd
+  PDController turnInPlacePD(0, 0, -0.3, 0.3);           // TODO: tune kp,kd i made the output ranges half max velocity
+  float target_heading = 0;                              // read only the moment we lose wall reference
+  float lateral_correction = 0.0f;
 
-    //////////////////////////////////////////////////////shelnahom 3ashan teseting headingpd
-    // int last_mode = -1; // to detect change in motion type
-    // MotionType lastMotionTypeCtrl = STOP;
-    // uint32_t last_cmd_id = 0; // b3rad el command id 3ashan ne know law command gdeda w nreset el
-    // controllers bool status_sent = false; // 3shan ne send status only once when motion is done
+  //////////////////////////////////////////////////////shelnahom 3ashan teseting headingpd
+  // int last_mode = -1; // to detect change in motion type
+  // MotionType lastMotionTypeCtrl = STOP;
+  // uint32_t last_cmd_id = 0; // b3rad el command id 3ashan ne know law command gdeda w nreset el controllers
+  // bool status_sent = false; // 3shan ne send status only once when motion is done
 
-    Pose straight_start_pose;
-    float straight_target_dist = 0.18f; // cell in meters
+  Pose straight_start_pose;
+  float straight_target_dist = 0.2f; // cell in meters
 
-    // std::vector<Point> path_copy;
-    // uint32_t local_ver = 0;
+  std::vector<Point> path_copy = makeLine(0.0, 0.15, 2.0, 0.15);
 
-    // purePursuit.reset();
+  // uint32_t local_ver = 0;
 
-    static uint8_t buf[64];
-    int n;
-    motor_speeds(0, 0);
-    vTaskDelay(pdMS_TO_TICKS(2000));
-    for (;;)
+  // purePursuit.reset();
+  // ###############################################################################
+  // encoders and ffpi stuff
+  const float m_per_tick = (float)M_PI * WHEEL_DIAMETER / ENCODER_CPR; // meter of travel per encoder tick
+
+  static int32_t totalL = 0;
+  static int32_t hist[N_WIN + 1] = {0};
+  static uint8_t hidx = 0;
+  ButterworthIIR velL_w;
+  velL_w.init(10, 200.0f);
+  velL_w.reset();
+
+  static int32_t histR[N_WIN + 1] = {0};
+  static uint8_t hidxR = 0;
+  ButterworthIIR velR_w;
+  velR_w.init(10, 200.0f);
+  velR_w.reset();
+
+  EncoderCount_t countL = (EncoderCount_t)__HAL_TIM_GET_COUNTER(&ENCODER_LEFT_TIM);
+  EncoderCount_t countR = (EncoderCount_t)__HAL_TIM_GET_COUNTER(&ENCODER_RIGHT_TIM);
+  EncoderCount_t lastCountL = countL;
+  EncoderCount_t /* Infinite loop */ lastCountR = countR;
+  // ##########################################################
+
+  static uint8_t buf[64];
+  int n;
+
+  target_heading = 0.0f;
+  walls[1] = walls[2] = walls[0] = 0;
+
+  MotionType current_motion = TURN;//added when testing purepursuit
+
+  float velRwinFiltered;
+  float velLwinFiltered;
+  motor_speeds(0, 0);
+  vTaskDelay(pdMS_TO_TICKS(2000));
+  
+  position.x = 0;
+  position.y = 0;
+  leftCtrl.reset();
+  rightCtrl.reset();
+  straight_start_pose = position;
+  double dist_traveled;
+  for (;;)
+  {
+    ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+
+    // #######################################################################
+    // encoders and motors ffpi
+    //  raw counts
+    //  overflow logic for tim3 16bit
+    uint16_t raw_R = __HAL_TIM_GET_COUNTER(&ENCODER_RIGHT_TIM);
+    int32_t deltaR = (int16_t)(raw_R - lastCountR);
+    countR += deltaR;
+
+    countL = (EncoderCount_t)__HAL_TIM_GET_COUNTER(&ENCODER_LEFT_TIM);
+    int32_t deltaL = (int32_t)(countL - lastCountL);
+
+    lastCountL = countL;
+    lastCountR = raw_R;
+    // #######################################
+    //   --- counts -> distance (m) -> raw velocity (m/s) ---
+    float rawVelL = (deltaL * m_per_tick) / ENCODER_TASK_DT_S;
+    float rawVelR = (deltaR * m_per_tick) / ENCODER_TASK_DT_S;
+
+    // windowed velocity
+    totalL += deltaL;
+    hist[hidx] = totalL;
+    hidx = (hidx + 1) % (N_WIN + 1);
+    int32_t deltaN = totalL - hist[hidx]; // count now minus count N samples ago
+    float winVelL = (deltaN * m_per_tick) / (N_WIN * ENCODER_TASK_DT_S);
+    velLwinFiltered = velL_w.filter(winVelL);
+
+    histR[hidxR] = countR;
+    hidxR = (hidxR + 1) % (N_WIN + 1);
+    int32_t deltaNR = countR - histR[hidxR]; // count now minus count N samples ago
+    float winVelR = (deltaNR * m_per_tick) / (N_WIN * ENCODER_TASK_DT_S);
+    velRwinFiltered = velR_w.filter(winVelR);
+
+    // ######################################
+    // n = snprintf((char *)buf, sizeof(buf), "%d\r\n",
+    //              (countR));
+    // HAL_UART_Transmit(&huart2, (uint8_t *)buf, n, 10);
+    // motor_speeds(100, 100);
+    ////finding the first value that drives the motors
+    // for (int i = 0; i <= 100; i++)
+    // {
+    // n = snprintf((char *)buf, sizeof(buf), "time:%lu,pwm:%d,velL:%ld\r\n",
+    //              (unsigned long)millis(), 100 * MOTOR_PWM_MAX_CCR,
+    //              (long)(velLwinFiltered * 1000.0f));
+    // HAL_UART_Transmit(&huart2, buf, n, 10);
+    // motor_speeds(100, 0);
+    // vTaskDelay(pdMS_TO_TICKS(500));
+    // }
+
+    // ##############TUNING FFFPI################################ss
+    float left_cmd = leftCtrl.compute(wheel_ref.left, velLwinFiltered, dt);
+    float right_cmd = rightCtrl.compute(wheel_ref.right, velRwinFiltered, dt);
+    motor_speeds(left_cmd, right_cmd);
+
+    // n = snprintf((char *)buf, sizeof(buf), "%ld,%f,%f\r\n",
+    //              (unsigned long)millis(),
+    //              (left_cmd), (right_cmd));
+    // HAL_UART_Transmit(&huart2, buf, n, 10);
+
+    float v = (velLwinFiltered + velRwinFiltered) * 0.5f;       // m/s, forward speed
+    float w = (velRwinFiltered - velLwinFiltered) / WHEEL_BASE; // rad/s, positive = turning left
+    // // TODO: et2akedy men dool
+    float distance_center = ((deltaL * m_per_tick) + (deltaR * m_per_tick)) * 0.5f;
+
+    // /*straight line: PD Controller + IR centering + longitudinal correction with diagonal IRs
+    //   turns: Pure pursuit only, corrected using gyro. there is no IR correction in turns
+
+    //   error generated from purepursuit is corrected by the IRs later
+    //   the error should be negligible for one turn
+    // */
+    taskENTER_CRITICAL();
+    // MotionType current_motion = motionType;
+    // uint32_t cmd = cmd_id;
+    float heading = euler.x(); // degree
+    taskEXIT_CRITICAL();
+
+    // if (motionType != lastMotionTypeMotion || cmd != last_cmd_id)
+    // {
+    //   // do i reset these? ana mayla le both reset or not reset so idk
+    //   leftCtrl.reset();
+    //   rightCtrl.reset();
+    //   lastMotionTypeMotion = current_motion;
+    //   last_cmd_id = cmd;
+    // }
+    // wheelVelocity wheel_speed = wheel_ref;
+    // float left_cmd = 0.0f;
+    // float right_cmd = 0.0f;
+
+    // if (current_motion != STOP)
+    // {
+    //   left_cmd = leftCtrl.compute(wheel_speed.left, velLfiltered, dt);
+    //   right_cmd = rightCtrl.compute(wheel_speed.right, velRfiltered, dt);
+    // }
+    // motor_speeds(left_cmd, right_cmd);
+    
+
+    // n = snprintf((char *)buf, sizeof(buf), "%f,%f, %f\r\n",
+    //              left_cmd, right_cmd, euler.x());
+    // HAL_UART_Transmit(&huart2, buf, n, 10);
+    // // update global
+    // // 2 critical blocks 3ashan mesh taba3 ba3d w law 3ayez ye3mel interrupt mabenhom no problem
+    taskENTER_CRITICAL();
+    position.theta = (heading * (M_PI / 180.0)); // wont calculate angle from encoders
+    position.x += distance_center * cos(position.theta);
+    position.y += distance_center * sin(position.theta);
+    taskEXIT_CRITICAL();
+
+    // n = snprintf((char *)buf, sizeof(buf), "%f %f %f\r\n",
+    //              dist_traveled,
+    //              position.x,
+    //              position.y);
+    // HAL_UART_Transmit(&huart2, buf, n, 10);
+    // taskENTER_CRITICAL();
+    robot_velocity.omega = w;
+    robot_velocity.v = v;
+    robot_velocity.vL = velLwinFiltered;
+    robot_velocity.vR = velRwinFiltered;
+    // taskEXIT_CRITICAL();
+
+    // #######################################################################
+    // if (path_version != local_ver)
+    // {
+    //   xSemaphoreTake(pathMutex, portMAX_DELAY);
+    //   path_copy = current_path;
+    //   local_ver = path_version;
+    //   xSemaphoreGive(pathMutex);
+    // }
+    taskENTER_CRITICAL();
+    Pose current_pose = position;
+    double v_measured = robot_velocity.v;
+    double omega_measured = robot_velocity.omega;
+    // double left_distance = ir_distance[2];
+    // double right_distance = ir_distance[3];
+    // double front_distance = (ir_distance[0] + ir_distance[1]) * 0.5;
+    double current_target_v = target_v;
+    uint32_t cmd = cmd_id;
+    // float heading = euler.x();  //heading_sign *euler.x(); //degree ccw positive
+    bool wall_front = walls[0];
+    bool wall_left = walls[1];
+    bool wall_right = walls[2];
+    taskEXIT_CRITICAL();
+
+    // if (motionType != lastMotionTypeCtrl || cmd != last_cmd_id)
+    // {
+    //   headingHoldPD.reset();
+    //   lateralPD.reset();
+    //   turnInPlacePD.reset();
+    //   purePursuit.reset();
+    //   lastMotionTypeCtrl = current_motion;
+    //   last_cmd_id = cmd;
+    //   status_sent = false; // b nreeset el flag
+    //   last_mode = -1;      // reset last mode to force re-evaluation of motion type
+
+    //   straight_start_pose = current_pose; // 3ashan a3raf el distance el mashaha fy STRAIGHT segment
+    // }
+    // emergency stop if front wall detected & 🛺 lsa mkml staright
+    // if (current_motion == STRAIGHT && (wall_front))
+    // { // TODO: i think en hena wall_front is not correct 3ashan momken yeb2a shayef front wall bas mashy sa7
+    //   // lesa mesh hayekhbat ya3ny fa IMPORTANT
+
+    //   taskENTER_CRITICAL();
+    //   wheel_ref.left = 0.0;
+    //   wheel_ref.right = 0.0;
+    //   motionType = STOP;
+    //   taskEXIT_CRITICAL();
+
+    //   if (!status_sent)
+    //   {
+    //     MotionStatus_t status = {0};
+    //     xQueueSend(motionStatusQueue, &status, 0);
+    //     status_sent = true;
+    //   }
+    //   continue;
+    // }
+
+    if (current_motion == STRAIGHT)
     {
-        vTaskDelayUntil(&last, pdMS_TO_TICKS(5));
+      // TODO: wrap reading the walls in CRITICAL section
+      double base_v = 0.5; // current_target_v;
+      float lateral_error = 0.0f;
+      if (wall_left && wall_right)
+      { // 2 side walls
+        // ir_thresh[2]-ir_thresh[3] offset between 2 sensors readings
+        // wont be entirely accurate law bo3ad 3an ba3d awy bas insha2allah accurate law el robot roughly fy nos el cell
+        lateral_error = ir_readings[2] - (ir_thresh[2] - ir_thresh[3]) - ir_readings[3];
+        // last_mode = 0; // STRAIGHT
+        lateral_correction = lateralPD.compute(0.0f, lateral_error, dt);
+      }
+      else if (wall_left)
+      { // only left wall
+        lateral_error = ir_readings[2] - ir_thresh[2];
+        // last_mode = 1; // LEFT_WALL
+        lateral_correction = lateralPD.compute(0.0f, lateral_error, dt);
+      }
+      else if (wall_right)
+      { // only right wall
+        lateral_error = ir_thresh[3] - ir_readings[3];
+        // last_mode = 2; // RIGHT_WALL
+        lateral_correction = lateralPD.compute(0.0f, lateral_error, dt);
+      }
 
-        // if (path_version != local_ver)
+      else
+      { // no side walls then hold current heading //dont know law dah momken ye7sal aslan bas better safe
+        // if (last_mode == -1)
         // {
-        //   xSemaphoreTake(pathMutex, portMAX_DELAY);
-        //   path_copy = current_path;
-        //   local_ver = path_version;
-        //   xSemaphoreGive(pathMutex);
+        //   taskENTER_CRITICAL();
+        //   target_heading = euler.x();
+        //   // last_mode = 3; // NO_WALLS
+        //   taskEXIT_CRITICAL();
         // }
         taskENTER_CRITICAL();
-        Pose current_pose = position;
-        double v_measured = robot_velocity.v;
-        double omega_measured = robot_velocity.omega;
-        // double left_distance = ir_distance[2];
-        // double right_distance = ir_distance[3];
-        // double front_distance = (ir_distance[0] + ir_distance[1]) * 0.5;
-        MotionType current_motion = STRAIGHT; // motionType;
-        double current_target_v = target_v;
-        uint32_t cmd = cmd_id;
-        // float heading = euler.x();  //heading_sign *euler.x(); //degree ccw positive
-        bool wall_front = walls[0];
-        bool wall_left = walls[1];
-        bool wall_right = walls[2];
+        float heading_error = wrapAngle(target_heading - heading);
         taskEXIT_CRITICAL();
+        lateral_correction = headingHoldPD.compute(0.0f, heading_error, dt);
+      }
+      // TODO :
+      taskENTER_CRITICAL();
+      wheel_ref.left = base_v + lateral_correction;
+      wheel_ref.right = base_v - lateral_correction;
+      taskEXIT_CRITICAL();
 
-        // if (motionType != lastMotionTypeCtrl || cmd != last_cmd_id)
-        // {
-        //   headingHoldPD.reset();
-        //   lateralPD.reset();
-        //   purePursuit.reset();
-        //   lastMotionTypeCtrl = current_motion;
-        //   last_cmd_id = cmd;
-        //   status_sent = false; // b nreeset el flag
-        //   last_mode = -1;      // reset last mode to force re-evaluation of motion type
+      dist_traveled = std::hypot(current_pose.x - straight_start_pose.x,
+                                 current_pose.y - straight_start_pose.y);
+      if (dist_traveled >= 0.8 - 0.1 /*&& !status_sent && motionStatusQueue != NULL*/)
+      {
+        taskENTER_CRITICAL();
+        wheel_ref.left = 0.0;
+        wheel_ref.right = 0.0;
+        motionType = STOP;
+        taskEXIT_CRITICAL();
+        motor_speeds(0, 0);
+        // vTaskDelay(pdMS_TO_TICKS(2000));
 
-        //   straight_start_pose = current_pose; // 3ashan a3raf el distance el mashaha fy STRAIGHT
-        //   segment
-        // }
-        // emergency stop if front wall detected & 🛺 lsa mkml staright
-        // if (current_motion == STRAIGHT && (wall_front))
-        // { // TODO: i think en hena wall_front is not correct 3ashan momken yeb2a shayef front
-        // wall bas mashy sa7
-        //   // lesa mesh hayekhbat ya3ny fa IMPORTANT
-
-        //   taskENTER_CRITICAL();
-        //   wheel_ref.left = 0.0;
-        //   wheel_ref.right = 0.0;
-        //   motionType = STOP;
-        //   taskEXIT_CRITICAL();
-
-        //   if (!status_sent)
-        //   {
-        //     MotionStatus_t status = {0};
-        //     xQueueSend(motionStatusQueue, &status, 0);
-        //     status_sent = true;
-        //   }
-        //   continue;
-        // }
-        // if (current_motion == STRAIGHT)
-        // {
-        //   // TODO: wrap reading the walls in CRITICAL section
-        //   double base_v = current_target_v;
-        //   float lateral_error = 0.0f;
-        //   if (walls[1] && walls[2])
-        //   { // 2 side walls
-        //     // ir_thresh[2]-ir_thresh[3] offset between 2 sensors readings
-        //     // wont be entirely accurate law bo3ad 3an ba3d awy bas insha2allah accurate law el
-        //     robot roughly fy nos el cell lateral_error = ir_readings[2] - (ir_thresh[2] -
-        //     ir_thresh[3]) - ir_readings[3]; last_mode = 0; // STRAIGHT lateral_correction =
-        //     lateralPD.compute(0.0f, lateral_error, dt);
-        //   }
-        //   else if (walls[1])
-        //   { // only left wall
-        //     lateral_error = ir_readings[2] - ir_thresh[2];
-        //     last_mode = 1; // LEFT_WALL
-        //     lateral_correction = lateralPD.compute(0.0f, lateral_error, dt);
-        //   }
-        //   else if (walls[2])
-        //   { // only right wall
-        //     lateral_error = ir_thresh[3] - ir_readings[3];
-        //     last_mode = 2; // RIGHT_WALL
-        //     lateral_correction = lateralPD.compute(0.0f, lateral_error, dt);
-        //   }
-
-        //   else
-        //   { // no side walls then hold current heading //dont know law dah momken ye7sal aslan
-        //   bas better safe
-        //     if (last_mode == -1)
-        //     {
-        //       taskENTER_CRITICAL();
-        //       target_heading = euler.x();
-        //       last_mode = 3; // NO_WALLS
-        //       taskEXIT_CRITICAL();
-        //     }
-        //     taskENTER_CRITICAL();
-        //     float heading_error = wrapAngle(target_heading - euler.x());
-        //     taskEXIT_CRITICAL();
-        // lateral_correction = headingHoldPD.compute(0.0f, -heading_error, dt);
-        //   }
-        //   // TODO :
-        //   taskENTER_CRITICAL();
-        //   wheel_ref.left = base_v - lateral_correction;
-        //   wheel_ref.right = base_v + lateral_correction;
-        //   taskEXIT_CRITICAL();
-
-        //   double dist_traveled = std::hypot(current_pose.x - straight_start_pose.x,
-        //                                     current_pose.y - straight_start_pose.y);
-        //   if (dist_traveled >= straight_target_dist && !status_sent && motionStatusQueue != NULL)
-        //   {
-        //     taskENTER_CRITICAL();
-        //     wheel_ref.left = 0.0;
-        //     wheel_ref.right = 0.0;
-        //     motionType = STOP;
-        //     taskEXIT_CRITICAL();
-
-        //     MotionStatus_t status = {false};
-        //     xQueueSend(motionStatusQueue, &status, 0);
-        //     status_sent = true;
-        //   }
-        // }
-        // else if (current_motion == TURN)
-        // {
-        //   wheelVelocity wheel_speed = purePursuit.computeControl(current_pose, v_measured,
-        //   omega_measured, current_target_v, path_copy, dt); taskENTER_CRITICAL(); wheel_ref =
-        //   wheel_speed; taskEXIT_CRITICAL();
-
-        //   if (!path_copy.empty() && !status_sent && motionStatusQueue != NULL)
-        //   {
-
-        //     const Point &goal = path_copy.back();
-        //     double dist_to_goal = std::hypot(goal.x - current_pose.x, goal.y - current_pose.y);
-
-        //     if (dist_to_goal < 0.01)
-        //     {                                  // threshold to consider the turn complete
-        //       MotionStatus_t status = {false}; // done
-        //       xQueueSend(motionStatusQueue, &status, 0);
-        //       status_sent = true;
-        //     }
-        //   }
-        // }
-        // else if (current_motion == TESTING_WHEEL_SPEEDS)
-        // {
-        //   taskENTER_CRITICAL();
-        //   wheel_ref.left = current_target_v;
-        //   wheel_ref.right = current_target_v;
-        //   taskEXIT_CRITICAL();
-        // }
-        // else if (current_motion == STOP)
-        // {
-        //   // TODO: need to make a case for STOP
-        //   taskENTER_CRITICAL();
-        //   wheel_ref.left = 0;
-        //   wheel_ref.right = 0;
-        //   taskEXIT_CRITICAL();
-        //   ////kda mafrood el el algo ykteen el current_path f el pathMutex w b3den path ver++
-        //   /// w yzwed el cmd_id f col 2mr gded 7ta lw nafs el motion type 3shan a3rf a3ml reset w
-        //   el status_sent flag
-        // }
-        float heading_error = wrapAngle(target_heading - euler.x());
-        lateral_correction = headingHoldPD.compute(0.0f, -heading_error, dt);
-        wheel_ref.left = 0.5 + lateral_correction;
-        wheel_ref.right = 0.5 - lateral_correction;
-        n = snprintf((char*)buf, sizeof(buf), "%f,%f,%f\r\n", wheel_ref.left, wheel_ref.right,
-                     euler.x());
-        HAL_UART_Transmit(&huart2, buf, n, 10);
+        MotionStatus_t status = {false};
+        // xQueueSend(motionStatusQueue, &status, 0);
+        // status_sent = true;
+      }
     }
+
+    //to rotate set motiontype and also set target_heading
+    else if(current_motion == TURN_IN_PLACE)
+    {
+        taskENTER_CRITICAL();
+        float heading_error = wrapAngle(target_heading - euler.x());
+        taskEXIT_CRITICAL();
+        lateral_correction = turnInPlacePD.compute(0.0f, heading_error, dt);
+
+        wheel_ref.left = lateral_correction;
+        wheel_ref.right = -lateral_correction;
+
+        if(heading_error < 2.0) 
+        {
+          //stop?
+          wheel_ref.left = 0;
+          wheel_ref.right = 0;
+          //TODO 
+          //change motionType?
+          //Signal the algorithm
+        }
+
+    }
+
+    else if (current_motion == TURN)
+    {
+      wheelVelocity wheel_speed = purePursuit.computeControl(current_pose, v_measured, omega_measured, current_target_v, path_copy, dt);
+      taskENTER_CRITICAL();
+      wheel_ref = wheel_speed;
+      taskEXIT_CRITICAL();
+
+      // n = snprintf((char *)buf, sizeof(buf), "%f %f %f\r\n",
+      //              position.x,
+      //              position.y,
+      //              position.theta * 180.0f / M_PI);
+      // HAL_UART_Transmit(&huart2, buf, n, 10);
+      if (!path_copy.empty() /*&& !status_sent && motionStatusQueue != NULL*/)
+      {
+
+        const Point &goal = path_copy.back();
+        // double dist_to_goal = std::hypot(goal.x - current_pose.x, goal.y - current_pose.y);
+
+        double gx = goal.x - current_pose.x;
+        double gy = goal.y - current_pose.y;
+        double dist_to_goal = std::hypot(gx, gy);
+
+        // positive while the goal is still ahead of the robot's heading
+        double forward = gx * std::cos(current_pose.theta) + gy * std::sin(current_pose.theta);
+
+        if (dist_to_goal < 0.05 || forward < 0.0 || current_pose.x >= goal.x)
+        {                                  // threshold to consider the turn complete
+          MotionStatus_t status = {false}; // done
+          if (motionStatusQueue != NULL)
+          {
+            MotionStatus_t status = {false};
+            xQueueSend(motionStatusQueue, &status, 0);
+            // status_sent = true;
+          }
+
+          motor_speeds(0, 0);//TODO change wheel_ref instead
+          HAL_GPIO_WritePin(GPIOC, GPIO_PIN_10, GPIO_PIN_SET);
+
+          n = snprintf((char *)buf, sizeof(buf), "done here\r\n");
+          HAL_UART_Transmit(&huart2, buf, n, 10);
+          
+          //TODO: is this correct?
+          current_motion = STOP;
+          wheel_ref.left = wheel_ref.right = 0;
+        
+          // vTaskDelay(pdMS_TO_TICKS(20000));
+        }
+      }
+    }
+    else if (current_motion == TESTING_WHEEL_SPEEDS)
+    {
+      taskENTER_CRITICAL();
+      wheel_ref.left = current_target_v;
+      wheel_ref.right = current_target_v;
+      taskEXIT_CRITICAL();
+    }
+    else if (current_motion == STOP)
+    {
+      // TODO: need to make a case for STOP
+      taskENTER_CRITICAL();
+      wheel_ref.left = 0;
+      wheel_ref.right = 0;
+      taskEXIT_CRITICAL();
+      ////kda mafrood el el algo ykteen el current_path f el pathMutex w b3den path ver++
+      /// w yzwed el cmd_id f col 2mr gded 7ta lw nafs el motion type 3shan a3rf a3ml reset w el status_sent flag
+    }
+    
+  }
 }
 
 void algorithmTask_run(void* arg)
@@ -924,7 +1039,7 @@ void loggerTask_run(void* arg)
     }
 }
 //////////////////////////////////////////////////END
-///TASKS//////////////////////////////////////////////
+/// TASKS//////////////////////////////////////////////
 void app_main()
 {
 
