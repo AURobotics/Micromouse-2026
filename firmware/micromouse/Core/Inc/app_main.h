@@ -6,8 +6,8 @@
 extern "C" {
 #endif
 
-#define ENCODER_LEFT_TIM htim2
-#define ENCODER_RIGHT_TIM htim3
+#define LEFT_ENCODER_TIM htim2
+#define RIGHT_ENCODER_TIM htim3
 
 #define ENCODER_CPR 362 //// counts per revolution
 // TODO:wheel measurements

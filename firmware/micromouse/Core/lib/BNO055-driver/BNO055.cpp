@@ -137,7 +137,7 @@ int8_t imu::temperature() const
 
 vec_3 imu::acceleration() const
 {
-    vec_3 v;
+    vec_3 v{};
     uint8_t buf[6] = {};
     read_register(imu_registers::sensor_data::ACCEL_X_LSB, buf, 6);
     for (int i = 0; i < 3; ++i)
@@ -150,7 +150,7 @@ vec_3 imu::acceleration() const
 
 vec_3 imu::linear_acceleration() const
 {
-    vec_3 v;
+    vec_3 v{};
     uint8_t buf[6] = {};
     read_register(imu_registers::sensor_data::LINEAR_ACCEL_X_LSB, buf, 6);
     for (int i = 0; i < 3; ++i)
@@ -171,7 +171,7 @@ vec_3 imu::gyro() const
 
 vec_3 imu::mag() const
 {
-    vec_3 v;
+    vec_3 v{};
     uint8_t buf[6] = {};
     read_register(imu_registers::sensor_data::MAG_X_LSB, buf, 6);
     for (int i = 0; i < 3; ++i)
@@ -186,7 +186,7 @@ vec_3 imu::mag() const
  */
 vec_3 imu::euler() const
 {
-    vec_3 v;
+    vec_3 v{};
     uint8_t buf[6] = {};
     read_register(imu_registers::sensor_data::EUL_X_LSB, buf, 6);
     for (int i = 0; i < 3; ++i)
@@ -200,7 +200,7 @@ vec_3 imu::euler() const
  */
 vec_4 imu::quaternion() const
 {
-    vec_4 v;
+    vec_4 v{};
     using imu_registers::sensor_data;
     uint8_t buf[8];
     read_register(sensor_data::QUAT_W_LSB, buf, 8);

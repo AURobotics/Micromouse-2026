@@ -2,6 +2,7 @@
 #include <algorithm>
 #include <app_main.h>
 #include <cfloat>
+#include <cmath>
 #include <main.h>
 
 
@@ -33,6 +34,8 @@ public:
             return delta;
         }
 
+        [[nodiscard]] int32_t read_couner() const { return __HAL_TIM_GET_COUNTER(m_encoder_timer); }
+
         void reset() { __HAL_TIM_SET_COUNTER(m_encoder_timer, 0); }
 
     private:
@@ -51,11 +54,8 @@ public:
     }
 
     constexpr Motor(TIM_HandleTypeDef* htim, uint32_t channel_1, uint32_t channel_2,
-                Decay_mode decay_mode = Decay_mode::slow) :
-        m_htim(htim),
-        m_channel_1(channel_1),
-        m_channel_2(channel_2),
-        m_decay_mode(decay_mode)
+                    Decay_mode decay_mode = Decay_mode::slow) :
+        m_htim(htim), m_channel_1(channel_1), m_channel_2(channel_2), m_decay_mode(decay_mode)
     {
     }
 
@@ -75,6 +75,10 @@ public:
 
         uint32_t active_ch = (speed >= FLT_EPSILON) ? m_channel_1 : m_channel_2;
         uint32_t idle_ch = (speed >= FLT_EPSILON) ? m_channel_2 : m_channel_1;
+
+        // idk if that will make a difference but will leave it here for good measures
+        if (std::fabs(speed) < FLT_EPSILON)
+            pwm = 0;
 
         bool fast = (m_decay_mode == Decay_mode::fast);
         __HAL_TIM_SET_COMPARE(m_htim, active_ch, fast ? pwm : MOTOR_PWM_MAX_CCR - pwm);

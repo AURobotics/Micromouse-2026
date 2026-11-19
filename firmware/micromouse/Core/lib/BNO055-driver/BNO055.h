@@ -56,14 +56,14 @@ public:
     void setOffsets(const CalibProfile_t &p) const;
     // void set_units_metric() const;
     // void set_units_default() const;
-    int8_t temperature() const;
-    vec_3 acceleration() const;
-    vec_3 linear_acceleration() const;
-    vec_3 gyro() const;
-    vec_3 mag() const;
-    vec_3 euler() const;
-    vec_4 quaternion() const;
-    bool isConnected() const;
+    [[nodiscard]] int8_t temperature() const;
+    [[nodiscard]] vec_3 acceleration() const;
+    [[nodiscard]] vec_3 linear_acceleration() const;
+    [[nodiscard]] vec_3 gyro() const;
+    [[nodiscard]] vec_3 mag() const;
+    [[nodiscard]] vec_3 euler() const;
+    [[nodiscard]] vec_4 quaternion() const;
+    [[nodiscard]] bool isConnected() const;
 
     uint8_t read_register(uint8_t reg, uint8_t *buffer, uint8_t len = 8) const;
 
@@ -73,3 +73,4 @@ public:
 private:
     HAL_StatusTypeDef write_register(uint8_t reg, uint8_t val) const;
 };
+
