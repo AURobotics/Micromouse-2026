@@ -52,20 +52,10 @@ void MX_GPIO_Init(void)
   __HAL_RCC_GPIOD_CLK_ENABLE();
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(CYBLE_SLEEP_GPIO_Port, CYBLE_SLEEP_Pin, GPIO_PIN_RESET);
-
-  /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(LED_1_GPIO_Port, LED_1_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOC, LED_2_Pin|GPIO_PIN_11, GPIO_PIN_RESET);
-
-  /*Configure GPIO pin : CYBLE_SLEEP_Pin */
-  GPIO_InitStruct.Pin = CYBLE_SLEEP_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
-  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-  HAL_GPIO_Init(CYBLE_SLEEP_GPIO_Port, &GPIO_InitStruct);
+  HAL_GPIO_WritePin(GPIOC, LED_2_Pin|LED_3_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pins : BTN_3_Pin BTN_1_Pin BTN_2_Pin */
   GPIO_InitStruct.Pin = BTN_3_Pin|BTN_1_Pin|BTN_2_Pin;
@@ -80,8 +70,8 @@ void MX_GPIO_Init(void)
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(LED_1_GPIO_Port, &GPIO_InitStruct);
 
-  /*Configure GPIO pins : LED_2_Pin PC11 */
-  GPIO_InitStruct.Pin = LED_2_Pin|GPIO_PIN_11;
+  /*Configure GPIO pins : LED_2_Pin LED_3_Pin */
+  GPIO_InitStruct.Pin = LED_2_Pin|LED_3_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;

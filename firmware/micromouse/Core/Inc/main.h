@@ -77,8 +77,6 @@ void Error_Handler(void);
 #define ADC2_R_D_GPIO_Port GPIOC
 #define ADC2_F_R_Pin GPIO_PIN_5
 #define ADC2_F_R_GPIO_Port GPIOC
-#define CYBLE_SLEEP_Pin GPIO_PIN_1
-#define CYBLE_SLEEP_GPIO_Port GPIOB
 #define BNO_SCL_Pin GPIO_PIN_10
 #define BNO_SCL_GPIO_Port GPIOB
 #define BTN_3_Pin GPIO_PIN_12
@@ -100,6 +98,8 @@ void Error_Handler(void);
 #define LED_1_GPIO_Port GPIOA
 #define LED_2_Pin GPIO_PIN_10
 #define LED_2_GPIO_Port GPIOC
+#define LED_3_Pin GPIO_PIN_11
+#define LED_3_GPIO_Port GPIOC
 #define BNO_SDA_Pin GPIO_PIN_12
 #define BNO_SDA_GPIO_Port GPIOC
 #define BNO_INT_Pin GPIO_PIN_2

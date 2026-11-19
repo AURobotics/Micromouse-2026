@@ -1,43 +1,48 @@
 #pragma once
 
-class PDController {
+class PDController
+{
 public:
-  PDController(float kp, float kd, float outputMin, float outputMax) {
-    kp_ = kp;
-    kd_ = kd;
-    outputMin_ = outputMin;
-    outputMax_ = outputMax;
-    reset();
-  }
-  void reset() {
-    prevError_ = 0.0f;
-    firstCall_ = true;
-  }
-  float compute(float setpoint, float measured, float dt) {
-    float error = setpoint - measured;
-
-    float derivative = 0.0f;
-    if (!firstCall_ && dt > 0.0f) {
-      derivative = (error - prevError_) / dt;
+    PDController(float kp, float kd, float outputMin, float outputMax)
+    {
+        kp_ = kp;
+        kd_ = kd;
+        outputMin_ = outputMin;
+        outputMax_ = outputMax;
+        reset();
     }
-    firstCall_ = false;
-    prevError_ = error;
+    void reset()
+    {
+        prevError_ = 0.0f;
+        firstCall_ = true;
+    }
+    float compute(float setpoint, float measured, float dt)
+    {
+        float error = setpoint - measured;
 
-    float output = kp_ * error + kd_ * derivative;
+        float derivative = 0.0f;
+        if (!firstCall_ && dt > 0.0f)
+        {
+            derivative = (error - prevError_) / dt;
+        }
+        firstCall_ = false;
+        prevError_ = error;
 
-    if (output > outputMax_)
-      output = outputMax_;
-    if (output < outputMin_)
-      output = outputMin_;
+        float output = kp_ * error + kd_ * derivative;
 
-    return output;
-  }
+        if (output > outputMax_)
+            output = outputMax_;
+        if (output < outputMin_)
+            output = outputMin_;
+
+        return output;
+    }
 
 private:
-  float kp_ = 0.0f;
-  float kd_ = 0.0f;
-  float outputMin_ = -10.0f;
-  float outputMax_ = 10.0f;
-  float prevError_ = 0.0f;
-  bool firstCall_ = true;
+    float kp_ = 0.0f;
+    float kd_ = 0.0f;
+    float outputMin_ = -10.0f;
+    float outputMax_ = 10.0f;
+    float prevError_ = 0.0f;
+    bool firstCall_ = true;
 };

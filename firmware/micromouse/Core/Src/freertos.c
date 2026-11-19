@@ -315,7 +315,7 @@ void controlTask(void *argument)
 void motionTask(void *argument)
 {
   /* USER CODE BEGIN motionTask */
-  motionTask_run(argument);
+  ir_filter_task_run(argument);
   // for (;;)
   // {
   //   // ulTaskNotifyTake(pdTRUE, portMAX_DELAY);

@@ -9,10 +9,10 @@ extern "C" {
 #define LEFT_ENCODER_TIM htim2
 #define RIGHT_ENCODER_TIM htim3
 
-#define ENCODER_CPR 362 //// counts per revolution
+#define PULSES_PER_WHEEL_REVOLUTION 373.3333 //// counts per WHEEL revolution
 // TODO:wheel measurements
-#define WHEEL_DIAMETER 0.02 //// in meters
-#define WHEEL_BASE 0.03 //// in meters
+#define WHEEL_DIAMETER 0.025 //// in meters
+#define WHEEL_BASE 0.085 //// in meters
 #define ENCODER_TASK_DT_S 0.005 //// in seconds
 #define EXPECTED_SIDE_DIST_TO_WALL 9 // TODO:(half cell width - half width of robot)
 
@@ -54,7 +54,7 @@ extern osMessageQueueId_t LoggingQueueHandle;
 
 void StartDefaultTask_run(void* arg);
 void bnoTask_run(void* arg);
-void motionTask_run(void* arg);
+void ir_filter_task_run(void* arg);
 void controlTask_run(void* arg);
 void algorithmTask_run(void* arg);
 void HMIConfigTask_run(void* arg);

@@ -40,7 +40,7 @@ public:
 
     private:
         TIM_HandleTypeDef* m_encoder_timer{};
-        uint32_t m_last{};
+        uint32_t m_last{0};
     };
 
     constexpr Motor(TIM_HandleTypeDef* htim, uint32_t channel_1, uint32_t channel_2,

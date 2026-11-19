@@ -49,7 +49,6 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     Core/Src/app_main.cpp
     Core/lib/feedforward_pi/feedforward_pi.cpp
     Core/lib/pure_pursuit/pure_pursuit.cpp
-    Core/lib/IIRFilter/iirFilter.cpp
     Core/lib/BNO055-driver/BNO055.cpp
     Core/lib/eeprom/eeprom.c
 )
@@ -58,12 +57,9 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
 target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
         Core/lib/feedforward_pi
         Core/lib/pure_pursuit
-        Core/lib/IIRFilter
         Core/lib/PDcontroller
         Core/lib/BNO055-driver
         Core/lib/eeprom
-        Core/lib/test_lib
-        Core/lib/motor
 )
 
 # Add project symbols (macros)
